@@ -1,0 +1,45 @@
+# Environment and secrets
+.env
+.env.*
+env/
+venv/
+.venv/
+.venv_old_*/
+secret
+.secret
+
+# Python cache and build artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.coverage
+.coverage.*
+htmlcov/
+.cache/
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# Runtime/generated local data
+backups/
+*.dump
+reports/
+uploads/
+*.log
+*.sqlite
+*.sqlite3
+*.db
+
+# IDE and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,54 @@
+﻿name: CI
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: "roksell-backend/requirements.txt"
+      - name: Install dependencies
+        working-directory: roksell-backend
+        run: pip install -r requirements.txt
+      - name: Compile check
+        run: python -m compileall roksell-backend/app
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: "roksell-frontend/package-lock.json"
+      - name: Install dependencies
+        working-directory: roksell-frontend
+        run: npm ci
+      - name: Lint
+        working-directory: roksell-frontend
+        run: npm run lint
+      - name: Build
+        working-directory: roksell-frontend
+        env:
+          API_URL: "http://127.0.0.1:8000"
+          NEXT_PUBLIC_API_URL: "http://127.0.0.1:8000"
+          NEXT_PUBLIC_TENANT_SLUG: "legacy"
+          NEXT_PUBLIC_SUPER_ADMIN_SLUG: "rokin"
+          NEXT_PUBLIC_TENANT_NAME: "Legacy"
+        run: npm run build
+
