@@ -190,6 +190,8 @@ Acesso restrito a owner do tenant super admin.
 
 - `services/checkout.py`: fluxo completo de criacao de pedido (validacoes, campanhas, estoque, persistencia) e preview; o router `/checkout` apenas orquestra e dispara notificacoes
 - `services/insights.py`: metricas e agregacoes de receita/pedidos por tenant; o router `/admin/insights` apenas orquestra (query params, auth) e chama `get_insights`
+- `services/catalog_admin.py`: CRUD de product masters, categorias, adicionais e produtos; o router `/admin/catalog` apenas orquestra (HTTP, upload de imagem/video) e chama o servico
+- `services/admin_onboarding.py`: estado do onboarding, conclusao (com geocode) e modo teste; o router `/admin` apenas orquestra os endpoints `/onboarding/*`
 - `services/subscriptions.py`: aplica plano e sincroniza `tenant_modules`
 - `services/shipping_distance.py`: calcula distancia via Google Maps com fallback Haversine/Nominatim
 - `services/user_sessions.py`: ciclo de vida de sessao
