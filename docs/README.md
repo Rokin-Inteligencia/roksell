@@ -13,6 +13,7 @@ Todo conteudo foi escrito para permitir continuidade por qualquer IA ou pessoa s
 6. `development-standards.md`
 7. `security.md`
 8. `performance.md`
+9. `visual-identity.md`
 
 ## 2. Objetivo de Cada Documento
 
@@ -24,6 +25,7 @@ Todo conteudo foi escrito para permitir continuidade por qualquer IA ou pessoa s
 - `security.md`: controles atuais, riscos e backlog de hardening.
 - `performance.md`: gargalos, metricas alvo e plano de melhoria.
 - `ARCHITECTURAL_GAPS_REPORT.md`: relatorio de gaps arquiteturais (revisao 2026) e como o `.cursorrules` mitiga os riscos.
+- `visual-identity.md`: diretrizes de design system, cores hexadecimais e tipografia da Rokin para uso da IA.
 
 ## 3. Setup Rapido (Local)
 
