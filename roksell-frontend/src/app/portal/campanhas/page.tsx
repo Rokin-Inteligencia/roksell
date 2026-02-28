@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { adminFetch, adminUpload } from "@/lib/admin-api";
 import { useAdminGuard } from "@/lib/use-admin-guard";
 import { useTenantModules } from "@/lib/use-tenant-modules";
@@ -11,19 +11,24 @@ import { usePathname } from "next/navigation";
 import { useOrgName } from "@/lib/use-org-name";
 import { clearAdminToken } from "@/lib/admin-auth";
 
+function RequiredLabel({ children }: { children: string }) {
+  return (
+    <span className="text-sm font-medium text-slate-800">
+      {children} <span className="text-red-600">*</span>
+    </span>
+  );
+}
+
 type FormState = {
   name: string;
   type: Campaign["type"];
   value_percent: number | string;
-  coupon_code: string;
   category_id: string;
   min_order_cents: number | string;
   starts_at: string;
   ends_at: string;
   is_active: boolean;
   usage_limit: number | string;
-  apply_mode: "first" | "stack";
-  priority: number | string;
   store_ids: string[];
   rule_config: RuleConfig;
   banner_enabled: boolean;
@@ -77,15 +82,12 @@ const defaultForm: FormState = {
   name: "",
   type: "order_percent",
   value_percent: 10,
-  coupon_code: "",
   category_id: "",
   min_order_cents: "",
   starts_at: "",
   ends_at: "",
   is_active: true,
   usage_limit: "",
-  apply_mode: "first",
-  priority: 0,
   store_ids: [],
   rule_config: {
     rules: [
@@ -144,10 +146,20 @@ const actionOptions = [
   { value: "brinde_produto", label: "Brinde (produto)" },
 ];
 
+const BANNER_WIDTH = 1200;
+const BANNER_HEIGHT = 400;
+const BANNER_ASPECT = BANNER_WIDTH / BANNER_HEIGHT;
+
 function fmtDate(value?: string | null) {
   if (!value) return "-";
   const d = new Date(value);
   return d.toLocaleString("pt-BR");
+}
+
+function fmtDateShort(value?: string | null) {
+  if (!value) return "-";
+  const d = new Date(value);
+  return d.toLocaleDateString("pt-BR");
 }
 
 export default function CampaignsAdmin() {
@@ -185,6 +197,10 @@ export default function CampaignsAdmin() {
   const [bannerPreview, setBannerPreview] = useState<string | null>(null);
   const [currentBannerUrl, setCurrentBannerUrl] = useState<string | null>(null);
   const [removeBanner, setRemoveBanner] = useState(false);
+  const [bannerPositionY, setBannerPositionY] = useState(50);
+  const [statusFilterOpen, setStatusFilterOpen] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const formRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   function buildRuleConfigPayload(config: RuleConfig): RuleConfig {
     return {
@@ -232,6 +248,26 @@ export default function CampaignsAdmin() {
     return Math.round(parsed * 100);
   }
 
+  /** Formata centavos para exibição R$ X,XX (sempre com ,00 se inteiro). */
+  function formatMinOrderDisplay(cents: number | string): string {
+    if (cents === "" || cents === null || cents === undefined) return "R$ 0,00";
+    const c = typeof cents === "number" ? cents : Number(cents);
+    if (!Number.isFinite(c) || c < 0) return "R$ 0,00";
+    const reais = Math.floor(c / 100);
+    const centavos = c % 100;
+    return `R$ ${reais},${centavos.toString().padStart(2, "0")}`;
+  }
+
+  function handleMinOrderChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const raw = e.target.value.replace(/[^0-9,]/g, "");
+    if (!raw) {
+      setForm((f) => ({ ...f, min_order_cents: "" }));
+      return;
+    }
+    const parsed = inputToCents(raw);
+    setForm((f) => ({ ...f, min_order_cents: parsed === "" ? "" : parsed }));
+  }
+
   function normalizeRuleConfigFromApi(config: RuleConfig | null | undefined): RuleConfig {
     if (!config || !Array.isArray(config.rules)) return defaultForm.rule_config;
     return {
@@ -260,6 +296,63 @@ export default function CampaignsAdmin() {
     setBannerPreview(null);
     setCurrentBannerUrl(null);
     setRemoveBanner(false);
+    setBannerPositionY(50);
+  }
+
+  /** Gera blob da imagem recortada no formato do banner (1200×400) com object-fit: cover e position Y. */
+  function cropBannerToBlob(file: File, positionYPercent: number): Promise<Blob> {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        try {
+          const srcW = img.naturalWidth;
+          const srcH = img.naturalHeight;
+          const destW = BANNER_WIDTH;
+          const destH = BANNER_HEIGHT;
+          const destAspect = destW / destH;
+          const srcAspect = srcW / srcH;
+          let drawW: number, drawH: number, sx: number, sy: number;
+          if (srcAspect > destAspect) {
+            drawH = srcH;
+            drawW = srcH * destAspect;
+            sx = (srcW - drawW) / 2;
+            sy = (srcH - drawH) * (positionYPercent / 100);
+          } else {
+            drawW = srcW;
+            drawH = srcW / destAspect;
+            sx = 0;
+            sy = (srcH - drawH) * (positionYPercent / 100);
+          }
+          sy = Math.max(0, Math.min(sy, srcH - drawH));
+          sx = Math.max(0, Math.min(sx, srcW - drawW));
+          const canvas = document.createElement("canvas");
+          canvas.width = destW;
+          canvas.height = destH;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            URL.revokeObjectURL(url);
+            reject(new Error("Canvas not supported"));
+            return;
+          }
+          ctx.drawImage(img, sx, sy, drawW, drawH, 0, 0, destW, destH);
+          URL.revokeObjectURL(url);
+          canvas.toBlob(
+            (blob) => (blob ? resolve(blob) : reject(new Error("toBlob failed"))),
+            file.type || "image/jpeg",
+            0.92
+          );
+        } catch (e) {
+          URL.revokeObjectURL(url);
+          reject(e);
+        }
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error("Failed to load image"));
+      };
+      img.src = url;
+    });
   }
 
   async function load() {
@@ -295,6 +388,21 @@ export default function CampaignsAdmin() {
 
   async function save() {
     if (!canEditCampaigns) return;
+    const errors: Record<string, string> = {};
+    if (!form.name.trim()) errors.name = "Nome é obrigatório.";
+    if (form.type === "category_percent" && !form.category_id) errors.category_id = "Selecione a categoria.";
+    if (form.type === "rule") {
+      if (!form.rule_config?.rules?.length) errors.rule_config = "Adicione ao menos uma regra.";
+    }
+    setFieldErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      const firstKey = ["name", "category_id", "rule_config"].find((k) => errors[k]);
+      const el = firstKey && formRefs.current[firstKey];
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+      setError("Preencha os campos obrigatórios.");
+      return;
+    }
+    setError(null);
     try {
       setSaving(true);
       setError(null);
@@ -312,15 +420,15 @@ export default function CampaignsAdmin() {
         name: form.name.trim(),
         type: form.type,
         value_percent: form.type === "rule" ? 0 : Number(form.value_percent),
-        coupon_code: form.coupon_code.trim() || null,
+        coupon_code: null,
         category_id: form.type === "category_percent" ? form.category_id || null : null,
         min_order_cents: form.min_order_cents === "" ? null : Number(form.min_order_cents),
         starts_at: form.starts_at ? new Date(form.starts_at).toISOString() : null,
         ends_at: form.ends_at ? new Date(form.ends_at).toISOString() : null,
         is_active: form.is_active,
         usage_limit: form.usage_limit === "" ? null : Number(form.usage_limit),
-        apply_mode: form.apply_mode,
-        priority: form.priority === "" ? 0 : Number(form.priority),
+        apply_mode: "first",
+        priority: 0,
         store_ids: form.store_ids,
         rule_config:
           form.type === "rule"
@@ -352,7 +460,8 @@ export default function CampaignsAdmin() {
       }
       if (bannerFile && campaignId && !removeBanner) {
         const formData = new FormData();
-        formData.append("file", bannerFile);
+        const blob = await cropBannerToBlob(bannerFile, bannerPositionY);
+        formData.append("file", blob, bannerFile.name);
         await adminUpload(`/admin/campaigns/${campaignId}/banner`, formData);
         if (bannerEnabledRequested && !bannerEnabledForPayload) {
           await adminFetch(`/admin/campaigns/${campaignId}`, {
@@ -370,6 +479,7 @@ export default function CampaignsAdmin() {
       setEditingId(null);
       setShowForm(false);
       resetBannerState();
+      setFieldErrors({});
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Falha ao salvar campanha");
@@ -386,15 +496,12 @@ export default function CampaignsAdmin() {
       name: c.name,
       type: c.type,
       value_percent: c.value_percent,
-      coupon_code: c.coupon_code || "",
       category_id: c.category_id || "",
       min_order_cents: c.min_order_cents ?? "",
       starts_at: c.starts_at ? new Date(c.starts_at).toISOString().slice(0, 16) : "",
       ends_at: c.ends_at ? new Date(c.ends_at).toISOString().slice(0, 16) : "",
       is_active: c.is_active,
       usage_limit: c.usage_limit ?? "",
-      apply_mode: (c.apply_mode as FormState["apply_mode"]) || "first",
-      priority: c.priority ?? 0,
       store_ids: c.store_ids ?? [],
       rule_config: normalizeRuleConfigFromApi(c.rule_config as RuleConfig),
       banner_enabled: c.banner_enabled ?? false,
@@ -475,22 +582,58 @@ export default function CampaignsAdmin() {
                   <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Campanhas</p>
                   <h2 className="text-lg font-semibold text-slate-900">Gerencie campanhas</h2>
                 </div>
-                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-                  <select
-                    className="input w-full sm:w-44"
-                    value={statusFilter}
-                    onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
-                  >
-                    <option value="active">Somente ativas</option>
-                    <option value="all">Todas</option>
-                    <option value="inactive">Somente inativas</option>
-                  </select>
+                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto sm:justify-end">
                   <input
                     className="input w-full sm:w-48"
                     placeholder="Buscar campanha"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                   />
+                  <div className="relative flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setStatusFilterOpen((o) => !o)}
+                      className="p-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors"
+                      title="Filtrar por status"
+                      aria-expanded={statusFilterOpen}
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+                      </svg>
+                    </button>
+                    {statusFilterOpen && (
+                      <>
+                        <div
+                          className="fixed inset-0 z-10"
+                          aria-hidden
+                          onClick={() => setStatusFilterOpen(false)}
+                        />
+                        <div className="absolute right-0 top-full mt-1 z-20 min-w-[180px] rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
+                          <button
+                            type="button"
+                            onClick={() => { setStatusFilter("active"); setStatusFilterOpen(false); }}
+                            className={`w-full text-left px-3 py-2 text-sm ${statusFilter === "active" ? "bg-[#6320ee]/10 text-[#6320ee] font-medium" : "text-slate-700 hover:bg-slate-50"}`}
+                          >
+                            Somente ativas
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setStatusFilter("all"); setStatusFilterOpen(false); }}
+                            className={`w-full text-left px-3 py-2 text-sm ${statusFilter === "all" ? "bg-[#6320ee]/10 text-[#6320ee] font-medium" : "text-slate-700 hover:bg-slate-50"}`}
+                          >
+                            Todas
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setStatusFilter("inactive"); setStatusFilterOpen(false); }}
+                            className={`w-full text-left px-3 py-2 text-sm ${statusFilter === "inactive" ? "bg-[#6320ee]/10 text-[#6320ee] font-medium" : "text-slate-700 hover:bg-slate-50"}`}
+                          >
+                            Somente inativas
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
                   <button
                     onClick={load}
                     className="px-3 py-2 rounded-lg border border-slate-200 text-sm bg-slate-100 hover:bg-white/20"
@@ -504,6 +647,8 @@ export default function CampaignsAdmin() {
                       setEditingId(null);
                       setForm(defaultForm);
                       resetBannerState();
+                      setError(null);
+                      setFieldErrors({});
                     }}
                     disabled={!canEditCampaigns}
                     className="px-3 py-2 rounded-lg bg-[#6320ee] text-white text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
@@ -535,20 +680,14 @@ export default function CampaignsAdmin() {
                       <div key={c.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
                         <div className="flex items-start justify-between gap-2">
                           <div>
-                            <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Campanha</p>
                             <p className="text-sm font-semibold text-slate-900">{c.name}</p>
                             <p className="text-xs text-slate-600">
-                              Min: {c.min_order_cents ? `R$ ${(c.min_order_cents / 100).toFixed(2)}` : "-"} | Criada {fmtDate(c.created_at)}
+                              Vigência: {fmtDateShort(c.starts_at)} a {fmtDateShort(c.ends_at)}
                             </p>
-                            {c.banner_enabled && (
-                              <p className="text-xs text-slate-600">
-                                Banner: {c.banner_position === "between" ? "Entre categorias" : "Topo"}
-                                {c.banner_popup ? " | Popup" : ""}
-                              </p>
-                            )}
+                            <p className="text-xs text-slate-500">Aplicada {c.usage_count} vez(es)</p>
                           </div>
                           <span
-                            className={`text-[10px] px-2 py-1 rounded-full border ${
+                            className={`text-[10px] px-2 py-1 rounded-full border shrink-0 ${
                               c.is_active
                                 ? "bg-emerald-200 border-emerald-300 text-emerald-900"
                                 : "bg-red-200 border-red-300 text-red-900"
@@ -556,27 +695,6 @@ export default function CampaignsAdmin() {
                           >
                             {c.is_active ? "Ativa" : "Inativa"}
                           </span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2 text-xs text-slate-700">
-                          <div>
-                            <p className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Tipo</p>
-                            <p>{typeLabels[c.type]}</p>
-                          </div>
-                          <div>
-                            <p className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Valor</p>
-                            <p>{c.type === "rule" ? "Por regras" : `${c.value_percent}%`}</p>
-                          </div>
-                          <div>
-                            <p className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Cupom</p>
-                            <p>{c.coupon_code || "-"}</p>
-                          </div>
-                          <div>
-                            <p className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Uso</p>
-                            <p>{c.usage_count} / {c.usage_limit ?? "-"}</p>
-                          </div>
-                        </div>
-                        <div className="text-xs text-slate-600">
-                          Periodo: {fmtDate(c.starts_at)} - {fmtDate(c.ends_at)}
                         </div>
                         <div className="grid grid-cols-2 gap-2">
                           <button
@@ -599,21 +717,18 @@ export default function CampaignsAdmin() {
                   </div>
                   <div className="hidden sm:block">
                     <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-slate-50">
-                      <table className="w-full text-xs sm:text-sm min-w-[900px]">
+                      <table className="w-full text-xs sm:text-sm min-w-[500px]">
                         <thead className="bg-slate-100 text-left text-slate-700">
                           <tr>
                             <th className="px-3 sm:px-4 py-2">Nome</th>
-                            <th className="px-3 sm:px-4 py-2">Tipo</th>
-                            <th className="px-3 sm:px-4 py-2">Valor</th>
-                            <th className="px-3 sm:px-4 py-2">Cupom</th>
-                            <th className="px-3 sm:px-4 py-2">Periodo</th>
-                            <th className="px-3 sm:px-4 py-2">Uso</th>
-                            <th className="px-3 sm:px-4 py-2 text-right">Acoes</th>
+                            <th className="px-3 sm:px-4 py-2">Vigência</th>
+                            <th className="px-3 sm:px-4 py-2">Aplicada</th>
+                            <th className="px-3 sm:px-4 py-2 text-right">Ações</th>
                           </tr>
                         </thead>
                         <tbody>
                           {visibleCampaigns.map((c, idx) => (
-                            <tr key={c.id} className={idx % 2 === 0 ? "bg-transparent" : "bg-slate-50"}>
+                            <tr key={c.id} className={idx % 2 === 0 ? "bg-transparent" : "bg-slate-50/50"}>
                               <td className="px-3 sm:px-4 py-2">
                                 <div className="font-semibold flex items-center gap-2 text-slate-900">
                                   {c.name}
@@ -627,31 +742,12 @@ export default function CampaignsAdmin() {
                                     {c.is_active ? "Ativa" : "Inativa"}
                                   </span>
                                 </div>
-                                <p className="text-xs text-slate-600">
-                                  Min: {c.min_order_cents ? `R$ ${(c.min_order_cents / 100).toFixed(2)}` : "-"} | Criada {fmtDate(c.created_at)}
-                                </p>
-                                {c.banner_enabled && (
-                                  <p className="text-xs text-slate-600">
-                                    Banner: {c.banner_position === "between" ? "Entre categorias" : "Topo"}
-                                    {c.banner_popup ? " | Popup" : ""}
-                                  </p>
-                                )}
                               </td>
-                              <td className="px-3 sm:px-4 py-2">{typeLabels[c.type]}</td>
-                              <td className="px-3 sm:px-4 py-2">
-                                {c.type === "rule" ? "Por regras" : `${c.value_percent}%`}
+                              <td className="px-3 sm:px-4 py-2 text-slate-600">
+                                {fmtDateShort(c.starts_at)} a {fmtDateShort(c.ends_at)}
                               </td>
-                              <td className="px-3 sm:px-4 py-2">{c.coupon_code || "-"}</td>
-                              <td className="px-3 sm:px-4 py-2">
-                                <div className="text-xs space-y-1">
-                                  <div>Inicio: {fmtDate(c.starts_at)}</div>
-                                  <div>Fim: {fmtDate(c.ends_at)}</div>
-                                </div>
-                              </td>
-                              <td className="px-3 sm:px-4 py-2">
-                                <div className="text-xs">
-                                  {c.usage_count} / {c.usage_limit ?? "-"}
-                                </div>
+                              <td className="px-3 sm:px-4 py-2 text-slate-600">
+                                {c.usage_count} vez(es)
                               </td>
                               <td className="px-3 sm:px-4 py-2 text-right space-x-2">
                                 <button
@@ -700,6 +796,8 @@ export default function CampaignsAdmin() {
                   setEditingId(null);
                   setForm(defaultForm);
                   resetBannerState();
+                  setError(null);
+                  setFieldErrors({});
                 }}
                 className="text-sm px-3 py-1 rounded-full bg-neutral-100 border border-neutral-200 hover:bg-neutral-200"
               >
@@ -710,18 +808,19 @@ export default function CampaignsAdmin() {
             {error && <p className="text-sm text-red-600">{error}</p>}
 
             <div className="grid md:grid-cols-2 gap-3 text-sm">
-              <label className="space-y-1">
-                <span>Nome</span>
+              <div ref={(r) => { formRefs.current.name = r; }} className="space-y-1">
+                <RequiredLabel>Nome</RequiredLabel>
                 <input
-                  className="input w-full"
+                  className={`input w-full ${fieldErrors.name ? "border-red-400 ring-1 ring-red-200" : ""}`}
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
                 />
-              </label>
-              <label className="space-y-1">
-                <span>Tipo</span>
+                {fieldErrors.name && <p className="text-xs text-red-600">{fieldErrors.name}</p>}
+              </div>
+              <div className="space-y-1">
+                <RequiredLabel>Tipo</RequiredLabel>
                 <select
-                  className="input w-full"
+                  className={`input w-full ${fieldErrors.type ? "border-red-400 ring-1 ring-red-200" : ""}`}
                   value={form.type}
                   onChange={(e) => setForm({ ...form, type: e.target.value as FormState["type"], category_id: "" })}
                 >
@@ -730,10 +829,10 @@ export default function CampaignsAdmin() {
                   <option value="category_percent">Desconto por categoria (%)</option>
                   <option value="rule">Campanha por regras</option>
                 </select>
-              </label>
+              </div>
               {form.type !== "rule" && (
                 <label className="space-y-1">
-                  <span>Valor (%)</span>
+                  <span className="text-sm font-medium text-slate-800">Valor (%)</span>
                   <input
                     className="input w-full"
                     type="number"
@@ -744,21 +843,12 @@ export default function CampaignsAdmin() {
                   />
                 </label>
               )}
-              <label className="space-y-1">
-                <span>Cupom</span>
-                <input
-                  className="input w-full"
-                  value={form.coupon_code}
-                  onChange={(e) => setForm({ ...form, coupon_code: e.target.value })}
-                  placeholder="Opcional"
-                />
-              </label>
 
               {form.type === "category_percent" && (
-                <label className="space-y-1">
-                  <span>Categoria</span>
+                <div ref={(r) => { formRefs.current.category_id = r; }} className="space-y-1">
+                  <RequiredLabel>Categoria</RequiredLabel>
                   <select
-                    className="input w-full"
+                    className={`input w-full ${fieldErrors.category_id ? "border-red-400 ring-1 ring-red-200" : ""}`}
                     value={form.category_id}
                     onChange={(e) => setForm({ ...form, category_id: e.target.value })}
                   >
@@ -769,24 +859,24 @@ export default function CampaignsAdmin() {
                       </option>
                     ))}
                   </select>
-                </label>
+                  {fieldErrors.category_id && <p className="text-xs text-red-600">{fieldErrors.category_id}</p>}
+                </div>
               )}
 
-              <label className="space-y-1">
-                <span>Pedido minimo (R$)</span>
+              <div ref={(r) => { formRefs.current.min_order_cents = r; }} className="space-y-1">
+                <span className="text-sm font-medium text-slate-800">Pedido mínimo (R$)</span>
                 <input
                   className="input w-full"
                   type="text"
                   inputMode="decimal"
-                  value={centsToInput(form.min_order_cents)}
-                  onChange={(e) =>
-                    setForm({ ...form, min_order_cents: inputToCents(e.target.value) })
-                  }
-                  placeholder="Opcional"
+                  value={form.min_order_cents === "" ? "" : formatMinOrderDisplay(form.min_order_cents)}
+                  onChange={handleMinOrderChange}
+                  placeholder="R$ 0,00"
                 />
-              </label>
+                <span className="text-xs text-slate-500">Opcional. Use vírgula para centavos.</span>
+              </div>
               <label className="space-y-1">
-                <span>Limite de uso</span>
+                <span className="text-sm font-medium text-slate-800">Limite de uso</span>
                 <input
                   className="input w-full"
                   type="number"
@@ -799,30 +889,7 @@ export default function CampaignsAdmin() {
                 />
               </label>
               <label className="space-y-1">
-                <span>Prioridade</span>
-                <input
-                  className="input w-full"
-                  type="number"
-                  value={form.priority}
-                  onChange={(e) =>
-                    setForm({ ...form, priority: e.target.value === "" ? "" : Number(e.target.value) })
-                  }
-                  placeholder="0"
-                />
-              </label>
-              <label className="space-y-1">
-                <span>Aplicacao</span>
-                <select
-                  className="input w-full"
-                  value={form.apply_mode}
-                  onChange={(e) => setForm({ ...form, apply_mode: e.target.value as FormState["apply_mode"] })}
-                >
-                  <option value="first">Parar ao aplicar</option>
-                  <option value="stack">Acumular campanhas</option>
-                </select>
-              </label>
-              <label className="space-y-1">
-                <span>Inicio</span>
+                <span className="text-sm font-medium text-slate-800">Início</span>
                 <input
                   className="input w-full"
                   type="datetime-local"
@@ -831,7 +898,7 @@ export default function CampaignsAdmin() {
                 />
               </label>
               <label className="space-y-1">
-                <span>Fim</span>
+                <span className="text-sm font-medium text-slate-800">Fim</span>
                 <input
                   className="input w-full"
                   type="datetime-local"
@@ -881,11 +948,12 @@ export default function CampaignsAdmin() {
             </div>
 
             {form.type === "rule" && (
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 space-y-4">
+              <div ref={(r) => { formRefs.current.rule_config = r; }} className="rounded-2xl border border-slate-200 bg-slate-50 p-3 space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Regras</p>
                     <p className="text-xs text-slate-600">Use E/OU nas condicoes e defina a acao.</p>
+                    {fieldErrors.rule_config && <p className="text-xs text-red-600 mt-1">{fieldErrors.rule_config}</p>}
                   </div>
                   <button
                     type="button"
@@ -1228,7 +1296,7 @@ export default function CampaignsAdmin() {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Banner</p>
-                  <p className="text-xs text-slate-600">Opcional</p>
+                  <p className="text-xs text-slate-600">Dimensões recomendadas: {BANNER_WIDTH}×{BANNER_HEIGHT} px (proporção 3:1). JPG, PNG ou WebP até 5MB.</p>
                 </div>
                 <label className="flex items-center gap-2 text-sm">
                   <input
@@ -1269,13 +1337,33 @@ export default function CampaignsAdmin() {
                         }
                       }}
                     />
-                    <span className="text-xs text-slate-500">JPG, PNG ou WebP ate 5MB.</span>
                   </label>
                   {bannerPreview && (
-                    <div className="md:col-span-2 flex items-center gap-3">
-                      <div className="h-20 w-32 rounded-xl overflow-hidden border border-slate-200 bg-slate-50">
+                    <div className="md:col-span-2 space-y-2">
+                      <p className="text-xs font-medium text-slate-600">Pré-visualização (ajuste a posição antes de salvar)</p>
+                      <div
+                        className="w-full rounded-xl overflow-hidden border border-slate-200 bg-slate-100"
+                        style={{ aspectRatio: BANNER_ASPECT }}
+                      >
                         {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={bannerPreview} alt="Banner" className="h-full w-full object-cover" />
+                        <img
+                          src={bannerPreview}
+                          alt="Banner"
+                          className="w-full h-full object-cover object-center"
+                          style={{ objectPosition: `50% ${bannerPositionY}%` }}
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-slate-500">Posição vertical:</span>
+                        <input
+                          type="range"
+                          min={0}
+                          max={100}
+                          value={bannerPositionY}
+                          onChange={(e) => setBannerPositionY(Number(e.target.value))}
+                          className="flex-1 max-w-xs"
+                        />
+                        <span className="text-xs text-slate-600 w-8">{bannerPositionY}%</span>
                       </div>
                       <button
                         type="button"

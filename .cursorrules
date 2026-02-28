@@ -120,13 +120,14 @@ Em caso de conflito entre documentação e código, o **código é a fonte de ve
 
 ## 9. Fluxo seguro para refatorações e entregas
 
-Sempre que houver **refatoração relevante** (extração de serviços, mudança de camadas, múltiplos arquivos) ou **nova fase de trabalho**, seguir este passo a passo:
+Sempre que houver **refatoração relevante** (extração de serviços, mudança de camadas, múltiplos arquivos), **nova fase de trabalho** ou **melhoria em módulo específico**, seguir este passo a passo:
 
-### 9.1 Antes de iniciar uma nova fase
+### 9.1 Antes de iniciar uma nova fase ou melhoria
 
-1. **Commitar** todo o trabalho atual na branch em que está (commits atômicos: um tema por commit).
-2. **Criar uma nova branch** para a próxima leva de mudanças (ex.: `feature/nome-da-fase` ou `feature/extract-catalog-admin-service`), a partir da branch atual ou da `main` após merge.
-3. Não misturar refatoração estrutural com feature nova na mesma branch: uma branch = um objetivo (ex.: “extrair serviço X” ou “nova feature Y”).
+1. **Definir escopo**: para qualquer melhoria em módulo (não só refatoração de gaps), criar **issue** no repositório (GitHub/GitLab) ou documentar o escopo em um item claro (ex.: em `docs/` ou no PR). Um objetivo por issue/branch.
+2. **Commitar** todo o trabalho atual na branch em que está (commits atômicos: um tema por commit).
+3. **Criar uma nova branch** para a próxima leva de mudanças (ex.: `feature/nome-da-fase`, `feature/extract-catalog-admin-service`, `feature/improve-module-x`), a partir da branch atual ou da `main` após merge.
+4. Não misturar refatoração estrutural com feature nova na mesma branch: **uma branch = um objetivo** (ex.: “extrair serviço X”, “melhorar módulo Y”, “nova feature Z”). O agente deve **sempre** usar branch dedicada para cada melhoria/refatoração, mesmo em sessões novas.
 
 ### 9.2 Durante a refatoração
 
@@ -141,6 +142,8 @@ Sempre que houver **refatoração relevante** (extração de serviços, mudança
 
 1. Rodar o checklist da seção **8**.
 2. Garantir que não há arquivos esquecidos (git status) e que a mensagem de commit descreve o que foi feito.
+
+**Continuidade:** Este fluxo (issue/branch por melhoria, commits atômicos, checklist) aplica-se em **toda sessão de agente**, inclusive quando o usuário pedir uma melhoria em um módulo específico em um novo chat. O agente deve ler a seção 9 e segui-la antes de implementar.
 
 Esta regra garante histórico limpo, facilidade de revert e menor risco de quebrar o sistema em refatorações grandes.
 
