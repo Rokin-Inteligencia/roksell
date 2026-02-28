@@ -16,7 +16,9 @@ Este documento resume os **5 principais riscos arquiteturais** identificados na 
 
 **Refatoração adicional (insights):** A lógica de agregações do endpoint `GET /admin/insights` foi extraída para `app/services/insights.py`. O router chama `get_insights(db, tenant.id, start_date, end_date)` e devolve o resultado.
 
-Os demais routers (`catalog_admin.py`, `admin.py`, `whatsapp_webhook.py`, `admin_central.py`) podem seguir o mesmo padrão de forma incremental: extrair funções de serviço por fluxo e manter o router apenas orquestrando.
+**Refatoração adicional (catalog_admin):** Toda a lógica de CRUD de product masters, categorias, adicionais e produtos foi extraída para `app/services/catalog_admin.py`. O router `app/routers/catalog_admin.py` faz apenas orquestração HTTP (Depends, Query, File/UploadFile), validação de upload de imagem/vídeo e chamadas ao serviço; uploads de mídia salvam no storage no router e atualizam a URL via `update_product_media_url`.
+
+Os demais routers (`admin.py`, `whatsapp_webhook.py`, `admin_central.py`) podem seguir o mesmo padrão de forma incremental: extrair funções de serviço por fluxo e manter o router apenas orquestrando.
 
 **Mitigação via `.cursorrules`:**  
 A seção **2.1** exige que routers façam apenas orquestração e que fluxos com múltiplas entidades ou regras não triviais sejam implementados em `app/services/` (ou domínio) e apenas invocados pelo router. O checklist (**§8**) reforça que payloads sejam validados e que a estrutura de camadas seja respeitada. Assim, novas features e refatorações tendem a seguir o padrão de serviço em vez de inflar ainda mais os routers.
