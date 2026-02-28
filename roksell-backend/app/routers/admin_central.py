@@ -1171,10 +1171,10 @@ def get_tenant_messaging_config(
     cfg = _get_or_create_config(db, tenant.id)
     return MessagingConfigPayload(
         whatsapp_enabled=cfg.whatsapp_enabled,
-        whatsapp_token=cfg.whatsapp_token,
+        whatsapp_token=_mask_token(cfg.whatsapp_token),
         whatsapp_phone_number_id=cfg.whatsapp_phone_number_id,
         telegram_enabled=cfg.telegram_enabled,
-        telegram_bot_token=cfg.telegram_bot_token,
+        telegram_bot_token=_mask_token(cfg.telegram_bot_token),
         telegram_chat_id=cfg.telegram_chat_id,
     )
 
@@ -1194,9 +1194,10 @@ def update_tenant_messaging_config(
         cfg.whatsapp_enabled = payload.whatsapp_enabled
     if payload.whatsapp_token is not None:
         normalized = _normalize_optional_text(payload.whatsapp_token)
-        if normalized and len(normalized) < 20:
+        if normalized and normalized != "••••••••" and len(normalized) < 20:
             raise HTTPException(status_code=400, detail="WhatsApp token muito curto")
-        cfg.whatsapp_token = normalized
+        if normalized and normalized != "••••••••":
+            cfg.whatsapp_token = normalized
     if payload.whatsapp_phone_number_id is not None:
         normalized = _normalize_optional_text(payload.whatsapp_phone_number_id)
         if normalized:
@@ -1215,18 +1216,19 @@ def update_tenant_messaging_config(
         cfg.telegram_enabled = payload.telegram_enabled
     if payload.telegram_bot_token is not None:
         normalized = _normalize_optional_text(payload.telegram_bot_token)
-        if normalized and len(normalized) < 20:
+        if normalized and normalized != "••••••••" and len(normalized) < 20:
             raise HTTPException(status_code=400, detail="Telegram token muito curto")
-        cfg.telegram_bot_token = normalized
+        if normalized and normalized != "••••••••":
+            cfg.telegram_bot_token = normalized
     if payload.telegram_chat_id is not None:
         cfg.telegram_chat_id = _normalize_optional_text(payload.telegram_chat_id)
     db.commit()
     return MessagingConfigPayload(
         whatsapp_enabled=cfg.whatsapp_enabled,
-        whatsapp_token=cfg.whatsapp_token,
+        whatsapp_token=_mask_token(cfg.whatsapp_token),
         whatsapp_phone_number_id=cfg.whatsapp_phone_number_id,
         telegram_enabled=cfg.telegram_enabled,
-        telegram_bot_token=cfg.telegram_bot_token,
+        telegram_bot_token=_mask_token(cfg.telegram_bot_token),
         telegram_chat_id=cfg.telegram_chat_id,
     )
 

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hmac
+import hashlib
 import json
+import logging
 import os
 import re
 import uuid
@@ -12,7 +15,7 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db
+from app.db import get_db, settings
 from app.services.whatsapp import build_order_status_message, send_whatsapp_message
 from app.services.whatsapp import normalize_phone
 from app.services.webpush import send_whatsapp_push_notifications
@@ -20,6 +23,7 @@ from app.storage import build_media_key, storage_save
 from app.tenancy import resolve_tenant
 
 router = APIRouter(prefix="/webhooks/whatsapp", tags=["whatsapp-webhook"])
+logger = logging.getLogger(__name__)
 
 ORDER_ID_PATTERN = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
@@ -97,6 +101,21 @@ def _verify_webhook(
     if hub_mode != "subscribe" or hub_verify_token != expected:
         raise HTTPException(status_code=403, detail="Invalid webhook token")
     return hub_challenge or ""
+
+
+def _verify_webhook_signature(raw_body: bytes, signature_header: str | None, app_secret: str) -> bool:
+    """Verifica X-Hub-Signature-256 (HMAC-SHA256 com App Secret da Meta)."""
+    if not signature_header or not signature_header.startswith("sha256="):
+        return False
+    expected_hex = signature_header[7:].strip().lower()
+    if len(expected_hex) != 64 or not all(c in "0123456789abcdef" for c in expected_hex):
+        return False
+    computed = hmac.new(
+        app_secret.encode("utf-8"),
+        raw_body,
+        hashlib.sha256,
+    ).hexdigest().lower()
+    return hmac.compare_digest(computed, expected_hex)
 
 
 @router.get("", response_class=PlainTextResponse)
@@ -366,7 +385,19 @@ async def receive_webhook_root(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    payload = await request.json()
+    raw_body = await request.body()
+    if not settings.whatsapp_app_secret:
+        raise HTTPException(
+            status_code=503,
+            detail="Webhook signature verification not configured (set WHATSAPP_APP_SECRET)",
+        )
+    signature = request.headers.get("X-Hub-Signature-256")
+    if not _verify_webhook_signature(raw_body, signature, settings.whatsapp_app_secret):
+        raise HTTPException(status_code=403, detail="Invalid webhook signature")
+    try:
+        payload = json.loads(raw_body)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
     return await _process_payload(db=db, tenant=None, payload=payload)
 
 
@@ -379,5 +410,17 @@ async def receive_webhook(
     tenant = resolve_tenant(db, tenant_id=None, tenant_slug=tenant_slug)
     if tenant is None:
         raise HTTPException(status_code=404, detail="Tenant not found")
-    payload = await request.json()
+    raw_body = await request.body()
+    if not settings.whatsapp_app_secret:
+        raise HTTPException(
+            status_code=503,
+            detail="Webhook signature verification not configured (set WHATSAPP_APP_SECRET)",
+        )
+    signature = request.headers.get("X-Hub-Signature-256")
+    if not _verify_webhook_signature(raw_body, signature, settings.whatsapp_app_secret):
+        raise HTTPException(status_code=403, detail="Invalid webhook signature")
+    try:
+        payload = json.loads(raw_body)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
     return await _process_payload(db=db, tenant=tenant, payload=payload)

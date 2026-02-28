@@ -251,7 +251,7 @@ class ItemIn(BaseModel):
 
 
 class PaymentIn(BaseModel):
-    method: str  # "pix" | "cash"
+    method: Literal["pix", "cash"]
 
 
 class CheckoutIn(BaseModel):

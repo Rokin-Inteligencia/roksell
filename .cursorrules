@@ -1,0 +1,121 @@
+# Roksell — Regras de Arquitetura e Qualidade (2026)
+
+Este arquivo define diretrizes **impositivas** para todas as interações de IA e desenvolvedores no repositório. O código e as decisões devem estar em conformidade com estas regras.
+
+---
+
+## 1. Onboarding obrigatório
+
+Antes de qualquer alteração de código, o agente deve:
+
+1. Ler, nesta ordem: `ARCHITECTURE.md`, `docs/README.md`, `docs/AI_HANDOFF.md`.
+2. Ler os documentos aplicáveis à tarefa: `docs/backend.md`, `docs/database.md`, `docs/frontend.md`, `docs/development-standards.md`, `docs/security.md`, `docs/performance.md`.
+3. Declarar explicitamente quais documentos leu e quais se aplicam à tarefa atual.
+
+Em caso de conflito entre documentação e código, o **código é a fonte de verdade** imediata; o agente deve apontar a divergência e propor atualização dos docs quando fizer sentido.
+
+---
+
+## 2. Desacoplamento e camadas
+
+### 2.1 Backend (FastAPI)
+
+- **Routers** (`app/routers/`): apenas orquestração de request/response. Proibido:
+  - Lógica de negócio complexa (cálculos, regras de domínio).
+  - Acesso direto a `db.query`/`db.add`/`db.commit` para fluxos que envolvam múltiplas entidades ou regras de negócio.
+- **Casos de uso e persistência**: devem estar em `app/services/` ou em funções de domínio em `app/domain/`. Novos fluxos que envolvam mais de uma entidade ou regras não triviais **devem** ser implementados em um módulo de serviço e chamados pelo router.
+- **Dependências circulares**: não introduzir ciclos entre `app.routers`, `app.services`, `app.domain`. O sentido permitido é: `routers` → `services` e `domain`; `services` podem usar `domain`; `domain` não deve importar `routers` nem `services` de forma que crie ciclo.
+- **Tenancy**: toda query que toque tabela com `tenant_id` **deve** filtrar por `tenant_id` (ou equivalente no contexto). Nunca expor dados de outro tenant.
+
+### 2.2 Frontend (Next.js)
+
+- **Páginas e route handlers**: não conter lógica de negócio pesada; delegar a hooks ou funções em `src/lib/`.
+- **Chamadas autenticadas**: páginas de portal/admin **devem** usar `adminFetch`/`adminUpload` (proxy `/api/admin/*`). Não chamar o backend autenticado diretamente a partir do browser.
+- **Estado**: preferir hooks reutilizáveis por módulo (ex.: `useOrdersData`, `useCatalogData`) em vez de lógica duplicada em cada página.
+
+---
+
+## 3. Segurança
+
+### 3.1 Validação de entrada (backend)
+
+- **Todo** payload de request deve ser validado por um schema Pydantic explícito (não usar `dict` ou `Any` como tipo de body).
+- Schemas de **entrada** devem usar tipos restritos quando o domínio for finito:
+  - Ex.: `method: Literal["pix", "cash"]` em vez de `method: str` para forma de pagamento.
+  - Enums ou `Literal` para status, tipos de campanha, etc.
+- Usar `Field(..., min_length=..., max_length=..., ge=..., le=...)` onde fizer sentido (senha, quantidades, valores monetários).
+- **Nunca** expor em schemas de resposta: `password_hash`, tokens de integração (WhatsApp, Telegram) em formato utilizável, ou segredos de configuração. Tokens de API podem ser mascarados ou omitidos em endpoints de leitura.
+
+### 3.2 Autenticação e autorização
+
+- Endpoints admin/portal devem usar as dependências existentes: `get_current_user`, `require_roles`, `require_module`, `require_module_action`.
+- Não confiar em dados do cliente para decisões de autorização; sempre validar no backend.
+- Webhooks que recebem payloads de terceiros (ex.: Meta/WhatsApp) **devem** validar assinatura (ex.: `X-Hub-Signature-256`) antes de processar o body.
+
+### 3.3 Logs e erros
+
+- Não logar nem retornar em mensagens de erro: senhas, tokens, chaves, stack traces completos em produção.
+- Erros HTTP devem ter mensagem clara para o cliente, sem vazar detalhes internos sensíveis.
+
+---
+
+## 4. Boas práticas de código
+
+### 4.1 Python (backend)
+
+- **Tipagem**: usar type hints em assinaturas de funções e retornos. Evitar `Any` exceto onde indispensável (ex.: integração com lib sem stubs).
+- **SOLID**:
+  - Novos serviços com responsabilidade única; interfaces estáveis para integrações externas.
+  - Preferir injeção de dependências (ex.: `get_db`, `get_tenant_context`) em vez de acessar globals.
+- **Imports**: não criar ciclos entre pacotes; manter `domain` independente de camada HTTP.
+
+### 4.2 TypeScript (frontend)
+
+- **Tipagem estrita**: não usar `any`; preferir tipos explícitos ou `unknown` com narrowing. Tipos compartilhados com a API em `src/types.ts` (ou módulos dedicados).
+- **Componentes**: componentes em PascalCase; hooks em camelCase com prefixo `use`.
+- **Formulários**: validar antes do submit; estado de loading/erro explícito; feedback de erro legível para o usuário.
+
+### 4.3 Consistência
+
+- Seguir convenções de nomenclatura e estrutura descritas em `docs/development-standards.md`.
+- Novas rotas/páginas devem seguir o padrão existente de guard (ex.: `useAdminGuard`, `useSuperAdminGuard`) e de layout (ex.: `AdminSidebar`, `ProfileBadge` no portal).
+
+---
+
+## 5. Testes e qualidade (TDD / qualidade)
+
+- **Novas features**: preferir implementação orientada a testes quando o escopo for estável (testes unitários para serviços/domínio; testes de integração para rotas críticas).
+- **Regressão**: alterações em fluxos críticos (auth, checkout, tenancy, webhooks) devem ser cobertas por testes ou validação manual explícita descrita no PR.
+- **CI**: não introduzir alterações que quebrem `python -m compileall` (backend) ou `npm run lint` / `npm run build` (frontend).
+
+---
+
+## 6. Banco de dados e migrações
+
+- Toda alteração de schema exige **migração Alembic** no backend.
+- Nome da migração em inglês e descritivo do objetivo.
+- Garantir que novas tabelas/colunas respeitem tenancy (`tenant_id` onde aplicável) e que não haja vazamento lógico entre tenants.
+
+---
+
+## 7. Documentação e continuidade
+
+- Mudanças **estruturais** (novas rotas, novos serviços, mudança de contrato de API, novos fluxos de auth) devem atualizar pelo menos um documento em `docs/`.
+- Mudanças que afetem a arquitetura geral devem atualizar também `ARCHITECTURE.md`.
+
+---
+
+## 8. Checklist obrigatório antes de entregar
+
+- [ ] Queries com escopo de tenant onde aplicável.
+- [ ] Endpoint protegido com dependência de auth/autorização correta.
+- [ ] Payload de entrada validado por schema Pydantic (e tipos restritos quando cabível).
+- [ ] Nenhum dado sensível em resposta ou logs.
+- [ ] Frontend admin/portal usando proxy `/api/admin/*` com `adminFetch`/`adminUpload`.
+- [ ] Migração Alembic criada para alteração de schema.
+- [ ] Documentação atualizada em caso de mudança estrutural.
+- [ ] Build/lint passando (backend e frontend).
+
+---
+
+Estas regras complementam e reforçam `AGENTS.md` e a documentação em `docs/`. Em caso de conflito com instruções pontuais do usuário, o usuário pode sobrescrever explicitamente; na ausência disso, estas diretrizes devem ser seguidas.
