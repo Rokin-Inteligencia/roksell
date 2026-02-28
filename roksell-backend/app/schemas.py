@@ -1,7 +1,7 @@
 from datetime import datetime, date
 from typing import List, Optional, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 from app import models
 
 AvailabilityStatus = Literal["available", "order", "unavailable"]
@@ -636,6 +636,60 @@ class TenantInfoOut(BaseModel):
     slug: str
     name: str
     users_limit: int
+
+
+# Admin onboarding
+
+
+class OnboardingAddressOut(BaseModel):
+    postal_code: str = ""
+    street: str = ""
+    number: str = ""
+    district: str = ""
+    city: str = ""
+    state: str = ""
+    complement: str = ""
+    reference: str = ""
+
+
+class OnboardingStateOut(BaseModel):
+    needs_onboarding: bool
+    store_id: Optional[str] = None
+    store_name: str = ""
+    person_type: str = "company"
+    document: str = ""
+    contact_email: str = ""
+    contact_phone: str = ""
+    address: OnboardingAddressOut
+    operating_hours: List[OperatingHoursDay] = Field(default_factory=list)
+
+
+class OnboardingCompletePayload(BaseModel):
+    store_id: Optional[str] = None
+    store_name: str = Field(min_length=1, max_length=255)
+    person_type: str = Field(min_length=1, max_length=32)
+    document: str = Field(min_length=1, max_length=32)
+    contact_email: EmailStr
+    contact_phone: str = Field(min_length=1, max_length=32)
+    postal_code: str = Field(min_length=8, max_length=16)
+    street: str = Field(min_length=1, max_length=255)
+    number: str = Field(min_length=1, max_length=32)
+    district: str = Field(min_length=1, max_length=255)
+    city: str = Field(min_length=1, max_length=255)
+    state: str = Field(min_length=2, max_length=8)
+    complement: Optional[str] = None
+    reference: Optional[str] = None
+    operating_hours: List[OperatingHoursDay] = Field(default_factory=list)
+
+
+class OnboardingCompleteOut(BaseModel):
+    ok: bool
+    store_id: str
+
+
+class OnboardingTestModeOut(BaseModel):
+    ok: bool
+    activation_mode: str
 
 
 # Catalog admin
