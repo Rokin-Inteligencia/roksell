@@ -188,6 +188,8 @@ Acesso restrito a owner do tenant super admin.
 
 ## 7. Servicos de Dominio Relevantes
 
+- `services/checkout.py`: fluxo completo de criacao de pedido (validacoes, campanhas, estoque, persistencia) e preview; o router `/checkout` apenas orquestra e dispara notificacoes
+- `services/insights.py`: metricas e agregacoes de receita/pedidos por tenant; o router `/admin/insights` apenas orquestra (query params, auth) e chama `get_insights`
 - `services/subscriptions.py`: aplica plano e sincroniza `tenant_modules`
 - `services/shipping_distance.py`: calcula distancia via Google Maps com fallback Haversine/Nominatim
 - `services/user_sessions.py`: ciclo de vida de sessao

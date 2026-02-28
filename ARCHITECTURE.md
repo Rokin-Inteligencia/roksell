@@ -1,4 +1,4 @@
-﻿# Sistema Restaurante - Arquitetura Tecnica
+# Sistema Restaurante - Arquitetura Tecnica
 
 Documento atualizado em 2026-02-25.
 Objetivo: servir como base de handoff tecnico para qualquer pessoa ou IA continuar evolucoes sem contexto previo.
@@ -146,4 +146,5 @@ Pontos de melhoria:
 - `docs/development-standards.md`: padroes oficiais de desenvolvimento
 - `docs/security.md`: analise de seguranca e roadmap
 - `docs/performance.md`: analise de performance e melhorias
+- `docs/ARCHITECTURAL_GAPS_REPORT.md`: relatorio de gaps da revisao arquitetural e mitigacao via .cursorrules
 

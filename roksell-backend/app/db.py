@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     telegram_chat_id: str | None = Field(default=None, alias="TELEGRAM_CHAT_ID")
     whatsapp_token: str | None = Field(default=None, alias="WHATSAPP_TOKEN")
     whatsapp_phone_number_id: str | None = Field(default=None, alias="WHATSAPP_PHONE_NUMBER_ID")
+    whatsapp_app_secret: str | None = Field(default=None, alias="WHATSAPP_APP_SECRET")
     auth_secret: str = Field(alias="AUTH_SECRET")
     auth_secret_previous: str | None = Field(default=None, alias="AUTH_SECRET_PREVIOUS")
     auth_secrets: str | None = Field(default=None, alias="AUTH_SECRETS")
@@ -49,6 +50,10 @@ class Settings(BaseSettings):
     @property
     def WHATSAPP_PHONE_NUMBER_ID(self) -> str | None:
         return self.whatsapp_phone_number_id
+
+    @property
+    def WHATSAPP_APP_SECRET(self) -> str | None:
+        return self.whatsapp_app_secret
 
     @property
     def AUTH_SECRET(self) -> str:

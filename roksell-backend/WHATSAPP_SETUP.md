@@ -1,11 +1,13 @@
-﻿# WhatsApp Business Cloud - Envio de pedidos
+# WhatsApp Business Cloud - Envio de pedidos
 
 Este projeto agora aceita envio do resumo do pedido por WhatsApp (como jÃ¡ acontece com Telegram) usando as variÃ¡veis de ambiente:
 
 - `WHATSAPP_TOKEN`: token permanente de um usuÃ¡rio de sistema na sua conta Meta.
 - `WHATSAPP_PHONE_NUMBER_ID`: **phone number ID** do nÃºmero do WhatsApp Business que enviarÃ¡ a mensagem.
+- `WHATSAPP_WEBHOOK_VERIFY_TOKEN`: token que a Meta envia no GET de verificaÃ§Ã£o do webhook (qualquer string secreta que vocÃª definir no painel).
+- `WHATSAPP_APP_SECRET`: **App Secret** do app Meta (em ConfiguraÃ§Ãµes do app > BÃ¡sico). ObrigatÃ³rio para receber eventos no POST do webhook: a API valida o header `X-Hub-Signature-256` com esse secret. Sem ele, os endpoints POST do webhook retornam 503.
 
-Sem esses valores o envio Ã© ignorado (nenhum erro Ã© lanÃ§ado).
+Sem `WHATSAPP_TOKEN` e `WHATSAPP_PHONE_NUMBER_ID`, o envio de mensagens Ã© ignorado (nenhum erro Ã© lanÃ§ado).
 
 ## Passo a passo na Meta
 

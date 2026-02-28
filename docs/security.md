@@ -43,7 +43,7 @@ Atualizado em 2026-02-25.
 ## 2.4 Webhooks e integracoes
 
 - webhook billing com verificacao HMAC em `X-Signature`
-- WhatsApp challenge token para verificacao de webhook
+- WhatsApp: challenge token para GET (verificacao de webhook); POST exige validacao de `X-Hub-Signature-256` com `WHATSAPP_APP_SECRET` (App Secret do app Meta)
 
 ## 2.5 Upload de midia
 
@@ -63,9 +63,7 @@ Atualizado em 2026-02-25.
    - impacto: risco aumentado em caso de credencial comprometida
    - recomendacao: MFA opcional no curto prazo, obrigatoria por tenant no medio prazo
 
-3. Verificacao de integridade de payload do webhook WhatsApp nao formalizada
-   - impacto: potencial aceite de evento nao autenticado
-   - recomendacao: validar assinatura oficial (`X-Hub-Signature-256`)
+3. ~~Verificacao de integridade de payload do webhook WhatsApp nao formalizada~~ **Implementado:** POST do webhook WhatsApp valida `X-Hub-Signature-256` quando `WHATSAPP_APP_SECRET` esta configurado.
 
 ## 3.2 Medio
 
