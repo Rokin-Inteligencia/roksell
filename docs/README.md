@@ -1,4 +1,4 @@
-﻿# Documentacao Tecnica - Sistema Restaurante
+# Documentacao Tecnica - Sistema Restaurante
 
 Este diretorio centraliza a documentacao operacional e de arquitetura do projeto.
 Todo conteudo foi escrito para permitir continuidade por qualquer IA ou pessoa sem contexto previo.
@@ -23,6 +23,7 @@ Todo conteudo foi escrito para permitir continuidade por qualquer IA ou pessoa s
 - `development-standards.md`: padroes obrigatorios de implementacao.
 - `security.md`: controles atuais, riscos e backlog de hardening.
 - `performance.md`: gargalos, metricas alvo e plano de melhoria.
+- `FLUXO-SISTEMA-EXCALIDRAW.md` + `fluxo-sistema-roksell.excalidraw`: diagrama do fluxo completo (topologia, seguranca, requisicoes, comunicacao back-front).
 
 ## 3. Setup Rapido (Local)
 
