@@ -562,6 +562,10 @@ def update_additional(
         additional.is_active = payload.is_active
     if payload.display_order is not None:
         additional.display_order = payload.display_order
+    if "image_url" in payload.model_fields_set:
+        if payload.image_url is None and additional.image_url:
+            storage_delete_by_url(additional.image_url)
+        additional.image_url = payload.image_url
 
     db.commit()
     db.refresh(additional)
@@ -594,8 +598,69 @@ def delete_additional(
             detail="Nao foi possivel excluir o adicional: ele ja possui historico de vendas.",
         )
 
+    storage_delete_by_url(additional.image_url)
     db.delete(additional)
     db.commit()
+
+
+@router.post("/additionals/{additional_id}/image", response_model=schemas.AdditionalOut)
+def upload_additional_image(
+    additional_id: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(require_module_action("products", "edit")),
+    user: models.User = Depends(require_roles(models.UserRole.owner, models.UserRole.manager, models.UserRole.operator)),
+):
+    allowed_store_ids = _load_accessible_store_ids(db, tenant.id, user)
+    additional = (
+        db.query(models.Additional)
+        .filter(
+            models.Additional.id == additional_id,
+            models.Additional.tenant_id == tenant.id,
+            _with_global_store_scope(models.Additional.store_id, allowed_store_ids),
+        )
+        .first()
+    )
+    if not additional:
+        raise HTTPException(status_code=404, detail="Additional not found")
+    file_name = (file.filename or "").lower()
+    expected_ext = ALLOWED_IMAGE_TYPES.get(file.content_type or "")
+    if not expected_ext:
+        if file_name.endswith(".jpg") or file_name.endswith(".jpeg"):
+            expected_ext = "jpg"
+        elif file_name.endswith(".png"):
+            expected_ext = "png"
+        elif file_name.endswith(".webp"):
+            expected_ext = "webp"
+    if not expected_ext:
+        raise HTTPException(status_code=400, detail="Unsupported image type")
+
+    contents = file.file.read(MAX_IMAGE_BYTES + 1)
+    if not contents:
+        raise HTTPException(status_code=400, detail="Empty image file")
+    if len(contents) > MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=400, detail="Image too large (max 5MB)")
+
+    detected_ext = None
+    if contents.startswith(PNG_SIGNATURE):
+        detected_ext = "png"
+    elif contents.startswith(JPEG_SIGNATURE):
+        detected_ext = "jpg"
+    elif contents.startswith(RIFF_SIGNATURE) and contents[8:12] == WEBP_SIGNATURE:
+        detected_ext = "webp"
+    if detected_ext != expected_ext:
+        raise HTTPException(status_code=400, detail="Invalid image file")
+
+    ext = detected_ext
+    filename = f"{uuid.uuid4()}.{ext}"
+    store_segment = _resolve_store_media_segment(db, tenant.id, additional.store_id)
+    key = build_media_key("tenants", tenant.slug, "stores", store_segment, "additionals", additional.id, filename)
+
+    storage_delete_by_url(additional.image_url)
+    additional.image_url = storage_save(key, contents, file.content_type)
+    db.commit()
+    db.refresh(additional)
+    return additional
 
 
 @router.post("/products", response_model=schemas.ProductOut, status_code=201)
@@ -641,7 +706,9 @@ def create_product(
         block_sale=block_sale_from_status(availability_status),
         availability_status=availability_status,
         image_url=payload.image_url,
+        image_urls=payload.image_urls,
         video_url=payload.video_url,
+        video_position=(payload.video_position or "end")[:10],
         display_order=payload.display_order,
         tags=payload.tags,
     )
@@ -733,10 +800,20 @@ def update_product(
         if payload.image_url is None and product.image_url:
             storage_delete_by_url(product.image_url)
         product.image_url = payload.image_url
+    if "image_urls" in payload.model_fields_set:
+        old_urls = product.image_urls or []
+        new_urls = payload.image_urls or []
+        for u in old_urls:
+            if u and u not in new_urls:
+                storage_delete_by_url(u)
+        product.image_urls = new_urls[:5]  # max 5
+        product.image_url = new_urls[0] if new_urls else None
     if "video_url" in payload.model_fields_set:
         if payload.video_url is None and product.video_url:
             storage_delete_by_url(product.video_url)
         product.video_url = payload.video_url
+    if payload.video_position is not None:
+        product.video_position = payload.video_position[:10]
     if payload.category_id is not None:
         product.category_id = payload.category_id
     if payload.display_order is not None:
@@ -823,8 +900,13 @@ def upload_product_image(
     store_segment = _resolve_store_media_segment(db, tenant.id, product.store_id)
     key = build_media_key("tenants", tenant.slug, "stores", store_segment, "products", product.id, filename)
 
-    storage_delete_by_url(product.image_url)
-    product.image_url = storage_save(key, contents, file.content_type)
+    current_urls = product.image_urls or ([product.image_url] if product.image_url else [])
+    if len(current_urls) >= 5:
+        raise HTTPException(status_code=400, detail="Maximum 5 images per product")
+    new_url = storage_save(key, contents, file.content_type)
+    current_urls.append(new_url)
+    product.image_urls = current_urls
+    product.image_url = current_urls[0]
     db.commit()
     db.refresh(product)
     return product
@@ -910,6 +992,8 @@ def delete_product(
             status_code=400,
             detail="Nao foi possivel excluir o produto: existem vendas vinculadas a este registro.",
         )
+    for url in product.image_urls or []:
+        storage_delete_by_url(url)
     storage_delete_by_url(product.image_url)
     storage_delete_by_url(product.video_url)
     db.delete(product)

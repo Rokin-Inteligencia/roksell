@@ -1,4 +1,5 @@
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy.types import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -54,6 +55,7 @@ class Additional(Base):
     price_cents: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     display_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    image_url: Mapped[str | None] = mapped_column(Text)
     product_links = relationship("ProductAdditional", back_populates="additional", cascade="all, delete-orphan")
 
 
@@ -97,7 +99,9 @@ class Product(Base):
     tags: Mapped[str | None] = mapped_column(Text)
     display_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     image_url: Mapped[str | None] = mapped_column(Text)
+    image_urls: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     video_url: Mapped[str | None] = mapped_column(Text)
+    video_position: Mapped[str] = mapped_column(String(10), default="end", nullable=False)
     created_at: Mapped["DateTime"] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     category = relationship("Category", back_populates="products")
     master = relationship("ProductMaster", back_populates="products")

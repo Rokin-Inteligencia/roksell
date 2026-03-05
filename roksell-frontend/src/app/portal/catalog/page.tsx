@@ -10,6 +10,9 @@ import { usePathname } from "next/navigation";
 import { useOrgName } from "@/lib/use-org-name";
 import { clearAdminToken } from "@/lib/admin-auth";
 import { useTenantModules } from "@/lib/use-tenant-modules";
+import { PriceInput } from "@/components/catalog/PriceInput";
+
+type CatalogTab = "products" | "categories" | "additionals";
 
 type ModalMode = "product" | "category" | "additional";
 type AvailabilityStatus = "available" | "order" | "unavailable";
@@ -63,7 +66,12 @@ export default function CatalogAdmin() {
   const [productSearch, setProductSearch] = useState("");
   const [categoryPage, setCategoryPage] = useState(1);
   const [productStatusFilter, setProductStatusFilter] = useState<"active" | "inactive" | "all">("active");
+  const [categoryStatusFilter, setCategoryStatusFilter] = useState<"active" | "inactive" | "all">("active");
+  const [additionalStatusFilter, setAdditionalStatusFilter] = useState<"active" | "inactive" | "all">("active");
   const [productFilterOpen, setProductFilterOpen] = useState(false);
+  const [categoryFilterOpen, setCategoryFilterOpen] = useState(false);
+  const [additionalFilterOpen, setAdditionalFilterOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<CatalogTab>("products");
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
 
   const [modalOpen, setModalOpen] = useState(false);
@@ -84,14 +92,18 @@ export default function CatalogAdmin() {
   const [additionalLinkPromptOpen, setAdditionalLinkPromptOpen] = useState(false);
   const [additionalToLink, setAdditionalToLink] = useState<Additional | null>(null);
   const [selectedProductIdsForAdditional, setSelectedProductIdsForAdditional] = useState<string[]>([]);
-  const [imageFile, setImageFile] = useState<File | null>(null);
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const [currentImageUrl, setCurrentImageUrl] = useState<string | null>(null);
-  const [removeImage, setRemoveImage] = useState(false);
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [videoPreview, setVideoPreview] = useState<string | null>(null);
   const [currentVideoUrl, setCurrentVideoUrl] = useState<string | null>(null);
   const [removeVideo, setRemoveVideo] = useState(false);
+  const [productImageUrls, setProductImageUrls] = useState<string[]>([]);
+  const [productNewImageFiles, setProductNewImageFiles] = useState<File[]>([]);
+  const [productNewImagePreviews, setProductNewImagePreviews] = useState<string[]>([]);
+  const [productVideoPosition, setProductVideoPosition] = useState<"start" | "end">("end");
+  const [additionalImageFile, setAdditionalImageFile] = useState<File | null>(null);
+  const [additionalImagePreview, setAdditionalImagePreview] = useState<string | null>(null);
+  const [currentAdditionalImageUrl, setCurrentAdditionalImageUrl] = useState<string | null>(null);
+  const [removeAdditionalImage, setRemoveAdditionalImage] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -110,6 +122,12 @@ export default function CatalogAdmin() {
       setCategories(catalog.categories);
       setProducts(catalog.products);
       setAdditionals(catalog.additionals ?? []);
+      setExpandedCategories(
+        new Set([
+          ...(catalog.categories || []).map((c: Category) => c.id),
+          UNCATEGORIZED_ID,
+        ])
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Falha ao carregar catalogo");
     } finally {
@@ -182,11 +200,35 @@ export default function CatalogAdmin() {
     [categories]
   );
 
+  const filteredCategories = useMemo(() => {
+    return sortedCategories.filter((c) => {
+      if (categoryStatusFilter === "all") return true;
+      if (categoryStatusFilter === "active") return c.is_active;
+      return !c.is_active;
+    });
+  }, [sortedCategories, categoryStatusFilter]);
+
+  const filteredAdditionals = useMemo(() => {
+    return additionals.filter((a) => {
+      if (additionalStatusFilter === "all") return true;
+      if (additionalStatusFilter === "active") return a.is_active;
+      return !a.is_active;
+    });
+  }, [additionals, additionalStatusFilter]);
+
   const hasProductFilter = productSearch.trim().length > 0 || productStatusFilter !== "all";
 
   function applyProductFilter(value: "active" | "inactive" | "all") {
     setProductStatusFilter(value);
     setProductFilterOpen(false);
+  }
+  function applyCategoryFilter(value: "active" | "inactive" | "all") {
+    setCategoryStatusFilter(value);
+    setCategoryFilterOpen(false);
+  }
+  function applyAdditionalFilter(value: "active" | "inactive" | "all") {
+    setAdditionalStatusFilter(value);
+    setAdditionalFilterOpen(false);
   }
 
   function toggleCategoryExpand(id: string) {
@@ -253,10 +295,10 @@ export default function CatalogAdmin() {
           availability_status: resolveAvailabilityStatus(prod),
           display_order: prod.display_order ?? 0,
         });
-        setCurrentImageUrl(prod.image_url ?? null);
-        setImagePreview(prod.image_url ?? null);
-        setImageFile(null);
-        setRemoveImage(false);
+        setProductImageUrls(prod.image_urls ?? (prod.image_url ? [prod.image_url] : []));
+        setProductNewImageFiles([]);
+        setProductNewImagePreviews([]);
+        setProductVideoPosition(prod.video_position ?? "end");
         setCurrentVideoUrl(prod.video_url ?? null);
         setVideoPreview(prod.video_url ?? null);
         setVideoFile(null);
@@ -277,10 +319,6 @@ export default function CatalogAdmin() {
           availability_status: "available",
           display_order: cat.display_order ?? 0,
         });
-        setCurrentImageUrl(null);
-        setImagePreview(null);
-        setImageFile(null);
-        setRemoveImage(false);
         setCurrentVideoUrl(null);
         setVideoPreview(null);
         setVideoFile(null);
@@ -301,11 +339,11 @@ export default function CatalogAdmin() {
           availability_status: "available",
           display_order: additional.display_order ?? 0,
         });
+        setCurrentAdditionalImageUrl(additional.image_url ?? null);
+        setAdditionalImagePreview(additional.image_url ?? null);
+        setAdditionalImageFile(null);
+        setRemoveAdditionalImage(false);
       }
-      setCurrentImageUrl(null);
-      setImagePreview(null);
-      setImageFile(null);
-      setRemoveImage(false);
       setCurrentVideoUrl(null);
       setVideoPreview(null);
       setVideoFile(null);
@@ -323,14 +361,14 @@ export default function CatalogAdmin() {
         availability_status: "available",
         display_order: 0,
       });
-      setCurrentImageUrl(null);
-      setImagePreview(null);
-      setImageFile(null);
-      setRemoveImage(false);
       setCurrentVideoUrl(null);
       setVideoPreview(null);
       setVideoFile(null);
       setRemoveVideo(false);
+      setProductImageUrls([]);
+      setProductNewImageFiles([]);
+      setProductNewImagePreviews([]);
+      setProductVideoPosition("end");
     }
     setModalOpen(true);
   }
@@ -338,20 +376,26 @@ export default function CatalogAdmin() {
   function closeModal() {
     setModalOpen(false);
     setEditingId(null);
-    if (imagePreview?.startsWith("blob:")) {
-      URL.revokeObjectURL(imagePreview);
-    }
     if (videoPreview?.startsWith("blob:")) {
       URL.revokeObjectURL(videoPreview);
     }
-    setImageFile(null);
-    setImagePreview(null);
-    setCurrentImageUrl(null);
-    setRemoveImage(false);
+    if (additionalImagePreview?.startsWith("blob:")) {
+      URL.revokeObjectURL(additionalImagePreview);
+    }
+    productNewImagePreviews.forEach((url) => {
+      if (url.startsWith("blob:")) URL.revokeObjectURL(url);
+    });
+    setProductImageUrls([]);
+    setProductNewImageFiles([]);
+    setProductNewImagePreviews([]);
     setVideoFile(null);
     setVideoPreview(null);
     setCurrentVideoUrl(null);
     setRemoveVideo(false);
+    setAdditionalImageFile(null);
+    setAdditionalImagePreview(null);
+    setCurrentAdditionalImageUrl(null);
+    setRemoveAdditionalImage(false);
   }
 
   async function saveModal() {
@@ -373,6 +417,8 @@ export default function CatalogAdmin() {
           is_active: modalData.is_active,
           is_custom: modalData.is_custom,
           availability_status: modalData.availability_status,
+          image_urls: productImageUrls,
+          video_position: productVideoPosition,
         };
         let productId = editingId;
         if (editingId) {
@@ -385,15 +431,10 @@ export default function CatalogAdmin() {
           productId = created.id;
         }
         if (productId) {
-          if (imageFile) {
+          for (const file of productNewImageFiles) {
             const form = new FormData();
-            form.append("file", imageFile);
+            form.append("file", file);
             await adminUpload(`/admin/catalog/products/${productId}/image`, form);
-          } else if (removeImage) {
-            await adminFetch(`/admin/catalog/products/${productId}`, {
-              method: "PATCH",
-              body: JSON.stringify({ image_url: null }),
-            });
           }
           if (videoFile) {
             const form = new FormData();
@@ -436,6 +477,19 @@ export default function CatalogAdmin() {
             method: "POST",
             body: JSON.stringify(payload),
           });
+        }
+        const additionalId = editingId ?? createdAdditional?.id;
+        if (additionalId) {
+          if (additionalImageFile) {
+            const form = new FormData();
+            form.append("file", additionalImageFile);
+            await adminUpload(`/admin/catalog/additionals/${additionalId}/image`, form);
+          } else if (removeAdditionalImage) {
+            await adminFetch(`/admin/catalog/additionals/${additionalId}`, {
+              method: "PATCH",
+              body: JSON.stringify({ image_url: null }),
+            });
+          }
         }
       }
       closeModal();
@@ -625,7 +679,7 @@ export default function CatalogAdmin() {
             <header className="flex flex-wrap items-center justify-between gap-3">
               <div className="space-y-1 text-slate-900">
                 <p className="text-xs uppercase tracking-[0.18em] text-slate-600">Admin • Catálogo</p>
-                <h1 className="text-3xl font-semibold">Produtos e categorias</h1>
+                <h1 className="text-3xl font-semibold">Produtos</h1>
                 <p className="text-sm text-slate-600">Gerencie catálogo com buscas rápidas e ações em linha.</p>
               </div>
               <ProfileBadge />
@@ -662,34 +716,72 @@ export default function CatalogAdmin() {
                   ))}
                 </select>
               </label>
-              <button
-                onClick={() => openModal("product")}
-                disabled={!canEditProducts || !selectedStoreId}
-                className="px-4 py-2 rounded-xl bg-white text-slate-900 font-semibold shadow-sm active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Novo produto
-              </button>
-              <button
-                onClick={() => openModal("category")}
-                disabled={!canEditProducts || !selectedStoreId}
-                className="px-4 py-2 rounded-xl bg-[#6320ee] text-white font-semibold shadow-sm active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Nova categoria
-              </button>
-              <button
-                onClick={() => openModal("additional")}
-                disabled={!canEditProducts || !selectedStoreId}
-                className="px-4 py-2 rounded-xl bg-slate-900 text-white font-semibold shadow-sm active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Novo adicional
-              </button>
+              <div className="flex rounded-xl border border-slate-200 bg-white p-1">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("products")}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
+                    activeTab === "products" ? "bg-[#6320ee] text-white" : "text-slate-600 hover:bg-slate-50"
+                  }`}
+                >
+                  Produtos
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("categories")}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
+                    activeTab === "categories" ? "bg-[#6320ee] text-white" : "text-slate-600 hover:bg-slate-50"
+                  }`}
+                >
+                  Categorias
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("additionals")}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
+                    activeTab === "additionals" ? "bg-[#6320ee] text-white" : "text-slate-600 hover:bg-slate-50"
+                  }`}
+                >
+                  Adicionais
+                </button>
+              </div>
+              {activeTab === "products" && (
+                <>
+                  <button
+                    onClick={() => openModal("product")}
+                    disabled={!canEditProducts || !selectedStoreId}
+                    className="px-4 py-2 rounded-xl bg-white text-slate-900 font-semibold shadow-sm active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Novo produto
+                  </button>
+                </>
+              )}
+              {activeTab === "categories" && (
+                <button
+                  onClick={() => openModal("category")}
+                  disabled={!canEditProducts || !selectedStoreId}
+                  className="px-4 py-2 rounded-xl bg-[#6320ee] text-white font-semibold shadow-sm active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Nova categoria
+                </button>
+              )}
+              {activeTab === "additionals" && (
+                <button
+                  onClick={() => openModal("additional")}
+                  disabled={!canEditProducts || !selectedStoreId}
+                  className="px-4 py-2 rounded-xl bg-slate-900 text-white font-semibold shadow-sm active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Novo adicional
+                </button>
+              )}
             </div>
 
+            {activeTab === "products" && (
             <section className="rounded-3xl bg-white text-slate-900 shadow-sm border border-slate-200 p-3 sm:p-5 space-y-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="space-y-1">
                   <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Catalogo</p>
-                  <h2 className="text-lg font-semibold">Categorias e produtos</h2>
+                  <h2 className="text-lg font-semibold">Produtos</h2>
                   <p className="text-sm text-slate-600">
                     Expanda as categorias para visualizar os produtos relacionados.
                   </p>
@@ -778,7 +870,7 @@ export default function CatalogAdmin() {
                             <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Categoria</p>
                             <p className="text-base font-semibold text-slate-900">{c.name}</p>
                             <p className="text-xs text-slate-500">
-                              Ordem {c.display_order ?? 0} ? {categoryProducts.length} produtos
+                              Ordem {c.display_order ?? 0} • {categoryProducts.length} produtos
                             </p>
                           </div>
                           <div className="flex flex-wrap items-center gap-2">
@@ -789,34 +881,11 @@ export default function CatalogAdmin() {
                             >
                               {c.is_active ? "Ativa" : "Inativa"}
                             </span>
-                            <>
-                              <button
-                                onClick={() => openModal("category", c.id)}
-                                disabled={!canEditProducts}
-                                className="px-3 py-1 rounded-lg border border-slate-200 text-xs hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
-                              >
-                                Editar
-                              </button>
-                              <button
-                                onClick={() => toggleCategory(c)}
-                                disabled={!canEditProducts}
-                                className="px-3 py-1 rounded-lg bg-[#6320ee] text-white text-xs hover:brightness-95 disabled:opacity-50 disabled:cursor-not-allowed"
-                              >
-                                {c.is_active ? "Inativar" : "Ativar"}
-                              </button>
-                              <button
-                                onClick={() => deleteCategory(c)}
-                                disabled={!canEditProducts}
-                                className="px-3 py-1 rounded-lg bg-red-50 text-red-700 border border-red-200 text-xs hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
-                              >
-                                Excluir
-                              </button>
-                            </>
                             <button
                               onClick={() => toggleCategoryExpand(c.id)}
                               className="px-3 py-1 rounded-lg border border-slate-200 text-xs hover:bg-slate-100"
                             >
-                              {expanded ? "Fechar" : "Ver produtos"}
+                              {expanded ? "Minimizar" : "Expandir"}
                             </button>
                           </div>
                         </div>
@@ -920,7 +989,7 @@ export default function CatalogAdmin() {
                               onClick={() => toggleCategoryExpand(UNCATEGORIZED_ID)}
                               className="px-3 py-1 rounded-lg border border-slate-200 text-xs hover:bg-slate-100"
                             >
-                              {expanded ? "Fechar" : "Ver produtos"}
+                              {expanded ? "Minimizar" : "Expandir"}
                             </button>
                           </div>
                         </div>
@@ -1030,7 +1099,143 @@ export default function CatalogAdmin() {
                 </div>
               )}
             </section>
+            )}
 
+            {activeTab === "categories" && (
+            <section className="rounded-3xl bg-white text-slate-900 shadow-sm border border-slate-200 p-3 sm:p-5 space-y-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="space-y-1">
+                  <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Catalogo</p>
+                  <h2 className="text-lg font-semibold">Categorias</h2>
+                  <p className="text-sm text-slate-600">
+                    Hierarquia de categorias e produtos. Use Minimizar para recolher apenas a categoria.
+                  </p>
+                </div>
+                <div className="flex flex-col sm:items-end gap-1 w-full sm:w-auto">
+                  <div className="flex items-center gap-2 w-full sm:w-auto">
+                    <div className="relative flex items-center">
+                      <button
+                        type="button"
+                        onClick={() => setCategoryFilterOpen((open) => !open)}
+                        className="h-10 w-10 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                        aria-label="Filtro de categorias"
+                        aria-expanded={categoryFilterOpen}
+                      >
+                        <svg className="h-4 w-4 mx-auto" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="M3 5h18" /><path d="M6 12h12" /><path d="M10 19h4" />
+                        </svg>
+                      </button>
+                      {categoryFilterOpen && (
+                        <div className="absolute left-0 sm:left-auto sm:right-0 mt-2 w-44 rounded-xl border border-slate-200 bg-white shadow-lg p-2 text-xs text-slate-700">
+                          <button type="button" onClick={() => applyCategoryFilter("active")} className={`w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 ${categoryStatusFilter === "active" ? "bg-slate-100 font-semibold" : ""}`}>Apenas ativas</button>
+                          <button type="button" onClick={() => applyCategoryFilter("inactive")} className={`w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 ${categoryStatusFilter === "inactive" ? "bg-slate-100 font-semibold" : ""}`}>Apenas inativas</button>
+                          <button type="button" onClick={() => applyCategoryFilter("all")} className={`w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 ${categoryStatusFilter === "all" ? "bg-slate-100 font-semibold" : ""}`}>Todas</button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <span className="text-xs text-slate-600">Total: {filteredCategories.length} categorias</span>
+                </div>
+              </div>
+              {filteredCategories.length === 0 ? (
+                <p className="text-sm text-slate-600">Nenhuma categoria encontrada.</p>
+              ) : (
+                <div className="space-y-3">
+                  {filteredCategories.map((c) => {
+                    const categoryProducts = productsByCategory.get(c.id) ?? [];
+                    const expanded = expandedCategories.has(c.id);
+                    return (
+                      <div key={c.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Categoria</p>
+                            <p className="text-base font-semibold text-slate-900">{c.name}</p>
+                            <p className="text-xs text-slate-500">Ordem de exibição {c.display_order ?? 0} • {categoryProducts.length} produtos</p>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className={`px-2 py-1 rounded-full text-[10px] ${c.is_active ? "bg-emerald-200 text-emerald-900" : "bg-amber-200 text-amber-900"}`}>{c.is_active ? "Ativa" : "Inativa"}</span>
+                            <button onClick={() => openModal("category", c.id)} disabled={!canEditProducts} className="px-3 py-1 rounded-lg border border-slate-200 text-xs hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed">Editar</button>
+                            <button onClick={() => toggleCategory(c)} disabled={!canEditProducts} className="px-3 py-1 rounded-lg bg-[#6320ee] text-white text-xs hover:brightness-95 disabled:opacity-50 disabled:cursor-not-allowed">{c.is_active ? "Inativar" : "Ativar"}</button>
+                            <button onClick={() => deleteCategory(c)} disabled={!canEditProducts} className="px-3 py-1 rounded-lg bg-red-50 text-red-700 border border-red-200 text-xs hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed">Excluir</button>
+                            <button onClick={() => toggleCategoryExpand(c.id)} className="px-3 py-1 rounded-lg border border-slate-200 text-xs hover:bg-slate-100">{expanded ? "Minimizar" : "Expandir"}</button>
+                          </div>
+                        </div>
+                        {expanded && (
+                          <div className="space-y-2 pl-2 border-l-2 border-slate-200">
+                            {categoryProducts.length === 0 ? (
+                              <p className="text-xs text-slate-500">Sem produtos nessa categoria.</p>
+                            ) : (
+                              categoryProducts.map((p) => (
+                                <div key={p.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2">
+                                  <div className="h-10 w-10 rounded-lg overflow-hidden border border-slate-200 bg-slate-100 flex items-center justify-center flex-shrink-0">
+                                    {p.image_url ? (
+                                      // eslint-disable-next-line @next/next/no-img-element
+                                      <img src={p.image_url} alt={p.name ?? "Produto"} className="h-full w-full object-cover" />
+                                    ) : (
+                                      <svg viewBox="0 0 24 24" className="h-4 w-4 text-slate-400" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                        <path d="M4 7h16v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" /><path d="M8 11l2.5 2.5L14 10l4 4" /><circle cx="9" cy="9" r="1.5" />
+                                      </svg>
+                                    )}
+                                  </div>
+                                  <div className="flex-1 min-w-[140px]">
+                                    <p className="text-sm font-medium text-slate-900">{p.name ?? "Produto customizado"}</p>
+                                    <p className="text-xs text-slate-500">{formatMoney(p.price_cents)}</p>
+                                  </div>
+                                  <span className={`px-2 py-1 rounded-full text-[10px] ${p.is_active ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>{p.is_active ? "Ativo" : "Inativo"}</span>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {(() => {
+                    const uncat = productsByCategory.get(UNCATEGORIZED_ID) ?? [];
+                    if (uncat.length === 0) return null;
+                    const expanded = expandedCategories.has(UNCATEGORIZED_ID);
+                    return (
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Categoria</p>
+                            <p className="text-base font-semibold text-slate-900">Sem categoria</p>
+                            <p className="text-xs text-slate-500">{uncat.length} produtos</p>
+                          </div>
+                          <button onClick={() => toggleCategoryExpand(UNCATEGORIZED_ID)} className="px-3 py-1 rounded-lg border border-slate-200 text-xs hover:bg-slate-100">{expanded ? "Minimizar" : "Expandir"}</button>
+                        </div>
+                        {expanded && (
+                          <div className="space-y-2 pl-2 border-l-2 border-slate-200">
+                            {uncat.map((p) => (
+                              <div key={p.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2">
+                                <div className="h-10 w-10 rounded-lg overflow-hidden border border-slate-200 bg-slate-100 flex items-center justify-center flex-shrink-0">
+                                  {p.image_url ? (
+                                    // eslint-disable-next-line @next/next/no-img-element
+                                    <img src={p.image_url} alt={p.name ?? "Produto"} className="h-full w-full object-cover" />
+                                  ) : (
+                                    <svg viewBox="0 0 24 24" className="h-4 w-4 text-slate-400" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                      <path d="M4 7h16v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" /><path d="M8 11l2.5 2.5L14 10l4 4" /><circle cx="9" cy="9" r="1.5" />
+                                    </svg>
+                                  )}
+                                </div>
+                                <div className="flex-1 min-w-[140px]">
+                                  <p className="text-sm font-medium text-slate-900">{p.name ?? "Produto customizado"}</p>
+                                  <p className="text-xs text-slate-500">{formatMoney(p.price_cents)}</p>
+                                </div>
+                                <span className={`px-2 py-1 rounded-full text-[10px] ${p.is_active ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>{p.is_active ? "Ativo" : "Inativo"}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+            </section>
+            )}
+
+            {activeTab === "additionals" && (
             <section className="rounded-3xl bg-white text-slate-900 shadow-sm border border-slate-200 p-3 sm:p-5 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="space-y-1">
@@ -1038,17 +1243,53 @@ export default function CatalogAdmin() {
                   <h2 className="text-lg font-semibold">Adicionais</h2>
                   <p className="text-sm text-slate-600">Cadastre e vincule adicionais para os produtos da loja.</p>
                 </div>
-                <span className="text-xs text-slate-600">{additionals.length} adicional(is)</span>
+                <div className="flex items-center gap-2">
+                  <div className="relative flex items-center">
+                    <button
+                      type="button"
+                      onClick={() => setAdditionalFilterOpen((open) => !open)}
+                      className="h-10 w-10 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                      aria-label="Filtro de adicionais"
+                      aria-expanded={additionalFilterOpen}
+                    >
+                      <svg className="h-4 w-4 mx-auto" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M3 5h18" /><path d="M6 12h12" /><path d="M10 19h4" />
+                      </svg>
+                    </button>
+                    {additionalFilterOpen && (
+                      <div className="absolute right-0 mt-2 w-44 rounded-xl border border-slate-200 bg-white shadow-lg p-2 text-xs text-slate-700">
+                        <button type="button" onClick={() => applyAdditionalFilter("active")} className={`w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 ${additionalStatusFilter === "active" ? "bg-slate-100 font-semibold" : ""}`}>Apenas ativos</button>
+                        <button type="button" onClick={() => applyAdditionalFilter("inactive")} className={`w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 ${additionalStatusFilter === "inactive" ? "bg-slate-100 font-semibold" : ""}`}>Apenas inativos</button>
+                        <button type="button" onClick={() => applyAdditionalFilter("all")} className={`w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 ${additionalStatusFilter === "all" ? "bg-slate-100 font-semibold" : ""}`}>Todos</button>
+                      </div>
+                    )}
+                  </div>
+                  <span className="text-xs text-slate-600">{filteredAdditionals.length} adicional(is)</span>
+                </div>
               </div>
-              {additionals.length === 0 ? (
-                <p className="text-sm text-slate-600">Nenhum adicional cadastrado para esta loja.</p>
+              {filteredAdditionals.length === 0 ? (
+                <p className="text-sm text-slate-600">Nenhum adicional encontrado para os filtros selecionados.</p>
               ) : (
                 <div className="space-y-2">
-                  {additionals.map((additional) => (
+                  {filteredAdditionals.map((additional) => (
                     <div
                       key={additional.id}
                       className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2"
                     >
+                      <div className="h-12 w-12 rounded-lg overflow-hidden border border-slate-200 bg-slate-100 flex items-center justify-center flex-shrink-0">
+                        {additional.image_url ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={additional.image_url}
+                            alt={additional.name}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <svg viewBox="0 0 24 24" className="h-5 w-5 text-slate-400" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <path d="M4 7h16v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" /><path d="M8 11l2.5 2.5L14 10l4 4" /><circle cx="9" cy="9" r="1.5" />
+                          </svg>
+                        )}
+                      </div>
                       <div className="flex-1 min-w-[180px]">
                         <p className="text-sm font-semibold text-slate-900">{additional.name}</p>
                         <p className="text-xs text-slate-500">
@@ -1091,6 +1332,7 @@ export default function CatalogAdmin() {
                 </div>
               )}
             </section>
+            )}
               </>
             )}
 
@@ -1161,7 +1403,7 @@ export default function CatalogAdmin() {
                     {!modalData.is_custom && (
                       <>
                         <label className="sm:col-span-2 space-y-1">
-                          <span>Nome</span>
+                          <span>Nome <span className="text-red-600" aria-hidden="true">*</span></span>
                           <input
                             className="input w-full"
                             value={modalData.name}
@@ -1169,7 +1411,7 @@ export default function CatalogAdmin() {
                           />
                         </label>
                         <label className="sm:col-span-2 space-y-1">
-                          <span>Descricao</span>
+                          <span>Descrição <span className="text-slate-400 text-xs">(opcional)</span></span>
                           <textarea
                             className="input w-full min-h-[96px]"
                             value={modalData.description}
@@ -1177,51 +1419,67 @@ export default function CatalogAdmin() {
                           />
                         </label>
                         <label className="sm:col-span-2 space-y-1">
-                          <span>Foto do produto</span>
-                          <input
-                            type="file"
-                            accept="image/jpeg,image/png,image/webp"
-                            className="input w-full"
-                            onChange={(e) => {
-                              const file = e.target.files?.[0] ?? null;
-                              if (imagePreview?.startsWith("blob:")) {
-                                URL.revokeObjectURL(imagePreview);
-                              }
-                              setImageFile(file);
-                              setRemoveImage(false);
-                              if (file) {
-                                setImagePreview(URL.createObjectURL(file));
-                              } else {
-                                setImagePreview(currentImageUrl);
-                              }
-                            }}
-                          />
-                          <span className="text-xs text-neutral-500">JPG, PNG ou WebP ate 5MB.</span>
-                        </label>
-                        {imagePreview && (
-                          <div className="sm:col-span-2 flex items-center gap-3">
-                            <div className="h-20 w-20 rounded-xl overflow-hidden border border-neutral-200">
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img src={imagePreview} alt="Foto do produto" className="h-full w-full object-cover" />
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (imagePreview.startsWith("blob:")) {
-                                  URL.revokeObjectURL(imagePreview);
-                                }
-                                setImageFile(null);
-                                setImagePreview(null);
-                                setRemoveImage(true);
-                              }}
-                              className="px-3 py-2 rounded-lg border border-neutral-200 text-sm hover:bg-neutral-100"
-                            >
-                              Remover foto
-                            </button>
+                          <span>Fotos do produto (carrossel) <span className="text-slate-400 text-xs">(opcional, até 5)</span></span>
+                          <div className="flex flex-wrap gap-2 items-start">
+                            {productImageUrls.map((url, idx) => (
+                              <div key={url} className="relative">
+                                <div className="h-20 w-20 rounded-xl overflow-hidden border border-neutral-200 bg-neutral-100">
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img src={url} alt={`Foto ${idx + 1}`} className="h-full w-full object-cover" />
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => setProductImageUrls((prev) => prev.filter((_, i) => i !== idx))}
+                                  className="absolute -top-1 -right-1 h-6 w-6 rounded-full bg-red-500 text-white text-xs flex items-center justify-center hover:bg-red-600"
+                                  aria-label="Remover foto"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            ))}
+                            {productNewImagePreviews.map((url, idx) => (
+                              <div key={`new-${idx}`} className="relative">
+                                <div className="h-20 w-20 rounded-xl overflow-hidden border border-neutral-200 bg-neutral-100">
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img src={url} alt={`Nova foto ${idx + 1}`} className="h-full w-full object-cover" />
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (url.startsWith("blob:")) URL.revokeObjectURL(url);
+                                    setProductNewImageFiles((prev) => prev.filter((_, i) => i !== idx));
+                                    setProductNewImagePreviews((prev) => prev.filter((_, i) => i !== idx));
+                                  }}
+                                  className="absolute -top-1 -right-1 h-6 w-6 rounded-full bg-red-500 text-white text-xs flex items-center justify-center hover:bg-red-600"
+                                  aria-label="Remover foto"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            ))}
+                            {productImageUrls.length + productNewImageFiles.length < 5 && (
+                              <label className="h-20 w-20 rounded-xl border border-dashed border-neutral-300 flex items-center justify-center cursor-pointer hover:bg-neutral-50 text-neutral-500 text-xs">
+                                <input
+                                  type="file"
+                                  accept="image/jpeg,image/png,image/webp"
+                                  className="sr-only"
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file && productImageUrls.length + productNewImageFiles.length < 5) {
+                                      setProductNewImageFiles((prev) => [...prev, file]);
+                                      setProductNewImagePreviews((prev) => [...prev, URL.createObjectURL(file)]);
+                                    }
+                                    e.target.value = "";
+                                  }}
+                                />
+                                + Adicionar
+                              </label>
+                            )}
                           </div>
-                        )}
+                          <span className="text-xs text-neutral-500">JPG, PNG ou WebP até 5MB cada. O vídeo pode ficar no início ou no final do carrossel.</span>
+                        </label>
                         <label className="sm:col-span-2 space-y-1">
-                          <span>Video do produto</span>
+                          <span>Vídeo do produto <span className="text-slate-400 text-xs">(opcional, único)</span></span>
                           <input
                             type="file"
                             accept="video/mp4,video/webm"
@@ -1240,7 +1498,18 @@ export default function CatalogAdmin() {
                               }
                             }}
                           />
-                          <span className="text-xs text-neutral-500">MP4 ou WebM ate 20MB.</span>
+                          <span className="text-xs text-neutral-500">MP4 ou WebM até 20MB.</span>
+                        </label>
+                        <label className="sm:col-span-2 space-y-1">
+                          <span>Posição do vídeo no carrossel</span>
+                          <select
+                            className="input w-full"
+                            value={productVideoPosition}
+                            onChange={(e) => setProductVideoPosition(e.target.value as "start" | "end")}
+                          >
+                            <option value="start">No início</option>
+                            <option value="end">No final</option>
+                          </select>
                         </label>
                         {videoPreview && (
                           <div className="sm:col-span-2 flex items-center gap-3">
@@ -1264,28 +1533,19 @@ export default function CatalogAdmin() {
                           </div>
                         )}
                         <label className="space-y-1">
-                          <span>Preco (R$)</span>
-                          <input
-                            type="text"
+                          <span>Preço (R$) <span className="text-red-600" aria-hidden="true">*</span></span>
+                          <PriceInput
+                            valueCents={modalData.price_cents}
+                            onChange={(cents) => setModalData({ ...modalData, price_cents: cents })}
                             className="input w-full"
-                            inputMode="decimal"
-                            value={
-                              typeof modalData.price_cents === "number"
-                                ? (modalData.price_cents / 100).toFixed(2)
-                                : ""
-                            }
-                            onChange={(e) => {
-                              const raw = e.target.value.replace(",", ".").replace(/[^0-9.]/g, "");
-                              const parsed = Number.parseFloat(raw);
-                              const cents = Number.isFinite(parsed) ? Math.round(parsed * 100) : 0;
-                              setModalData({ ...modalData, price_cents: cents });
-                            }}
+                            aria-label="Preço em reais"
                           />
+                          <span className="text-xs text-neutral-500">Digite o valor; os centavos são preenchidos primeiro.</span>
                         </label>
                       </>
                     )}
                     <label className="space-y-1">
-                      <span>Categoria</span>
+                      <span>Categoria <span className="text-slate-400 text-xs">(opcional)</span></span>
                       <select
                         className="input w-full"
                         value={modalData.category_id}
@@ -1390,7 +1650,7 @@ export default function CatalogAdmin() {
                 ) : modalMode === "category" ? (
                   <>
                     <label className="sm:col-span-2 space-y-1">
-                      <span>Nome</span>
+                      <span>Nome <span className="text-red-600" aria-hidden="true">*</span></span>
                       <input
                         className="input w-full"
                         value={modalData.name}
@@ -1398,7 +1658,7 @@ export default function CatalogAdmin() {
                       />
                     </label>
                     <label className="space-y-1">
-                      <span>Ordem</span>
+                      <span>Ordem de exibição</span>
                       <input
                         type="number"
                         className="input w-full"
@@ -1410,7 +1670,7 @@ export default function CatalogAdmin() {
                 ) : (
                   <>
                     <label className="sm:col-span-2 space-y-1">
-                      <span>Nome</span>
+                      <span>Nome <span className="text-red-600" aria-hidden="true">*</span></span>
                       <input
                         className="input w-full"
                         value={modalData.name}
@@ -1418,30 +1678,69 @@ export default function CatalogAdmin() {
                       />
                     </label>
                     <label className="sm:col-span-2 space-y-1">
-                      <span>Descricao</span>
+                      <span>Descrição <span className="text-slate-400 text-xs">(opcional)</span></span>
                       <textarea
                         className="input w-full min-h-[96px]"
                         value={modalData.description}
                         onChange={(e) => setModalData({ ...modalData, description: e.target.value })}
                       />
                     </label>
-                    <label className="space-y-1">
-                      <span>Preco (R$)</span>
+                    <label className="sm:col-span-2 space-y-1">
+                      <span>Foto do adicional <span className="text-slate-400 text-xs">(opcional)</span></span>
                       <input
-                        type="text"
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
                         className="input w-full"
-                        inputMode="decimal"
-                        value={(Number(modalData.price_cents || 0) / 100).toFixed(2)}
                         onChange={(e) => {
-                          const raw = e.target.value.replace(",", ".").replace(/[^0-9.]/g, "");
-                          const parsed = Number.parseFloat(raw);
-                          const cents = Number.isFinite(parsed) ? Math.round(parsed * 100) : 0;
-                          setModalData({ ...modalData, price_cents: cents });
+                          const file = e.target.files?.[0] ?? null;
+                          if (additionalImagePreview?.startsWith("blob:")) {
+                            URL.revokeObjectURL(additionalImagePreview);
+                          }
+                          setAdditionalImageFile(file);
+                          setRemoveAdditionalImage(false);
+                          if (file) {
+                            setAdditionalImagePreview(URL.createObjectURL(file));
+                          } else {
+                            setAdditionalImagePreview(currentAdditionalImageUrl);
+                          }
                         }}
                       />
+                      <span className="text-xs text-neutral-500">JPG, PNG ou WebP até 5MB.</span>
+                    </label>
+                    {additionalImagePreview && (
+                      <div className="sm:col-span-2 flex items-center gap-3">
+                        <div className="h-20 w-20 rounded-xl overflow-hidden border border-neutral-200">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={additionalImagePreview} alt="Foto do adicional" className="h-full w-full object-cover" />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (additionalImagePreview.startsWith("blob:")) {
+                              URL.revokeObjectURL(additionalImagePreview);
+                            }
+                            setAdditionalImageFile(null);
+                            setAdditionalImagePreview(null);
+                            setRemoveAdditionalImage(true);
+                          }}
+                          className="px-3 py-2 rounded-lg border border-neutral-200 text-sm hover:bg-neutral-100"
+                        >
+                          Remover foto
+                        </button>
+                      </div>
+                    )}
+                    <label className="space-y-1">
+                      <span>Preço (R$) <span className="text-red-600" aria-hidden="true">*</span></span>
+                      <PriceInput
+                        valueCents={modalData.price_cents}
+                        onChange={(cents) => setModalData({ ...modalData, price_cents: cents })}
+                        className="input w-full"
+                        aria-label="Preço em reais"
+                      />
+                      <span className="text-xs text-neutral-500">Digite o valor; os centavos são preenchidos primeiro.</span>
                     </label>
                     <label className="space-y-1">
-                      <span>Ordem</span>
+                      <span>Ordem de exibição</span>
                       <input
                         type="number"
                         className="input w-full"

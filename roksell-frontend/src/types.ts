@@ -12,7 +12,9 @@ export type Product = {
   block_sale?: boolean;
   availability_status?: "available" | "order" | "unavailable";
   image_url?: string;
+  image_urls?: string[];
   video_url?: string;
+  video_position?: "start" | "end";
   category_id?: string;
   display_order: number;
 };
@@ -24,6 +26,7 @@ export type Additional = {
   price_cents: number;
   is_active: boolean;
   display_order: number;
+  image_url?: string;
 };
 export type OrderSummary = { order_id: string; total_cents: number; tracking_token?: string };
 
