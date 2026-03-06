@@ -1,20 +1,18 @@
+"""
+Router admin/catalog: orquestração HTTP e upload de arquivos.
+Toda a lógica de negócio está em app.services.catalog_admin.
+"""
 import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
-from sqlalchemy import asc, func, or_
-from sqlalchemy.orm import Session, selectinload
 
 from app import models, schemas
 from app.auth.dependencies import require_module_action, require_roles
 from app.db import get_db
-from app.domain.catalog.availability import (
-    block_sale_from_status,
-    normalize_availability_status,
-    resolve_availability_status,
-)
-from app.domain.tenancy.access import user_accessible_store_ids
+from app.services import catalog_admin as catalog_admin_svc
 from app.storage import build_media_key, storage_delete_by_url, storage_save
 from app.tenancy import TenantContext
+from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/admin/catalog", tags=["admin-catalog"])
 
@@ -36,237 +34,6 @@ JPEG_SIGNATURE = b"\xFF\xD8\xFF"
 RIFF_SIGNATURE = b"RIFF"
 WEBP_SIGNATURE = b"WEBP"
 WEBM_SIGNATURE = b"\x1A\x45\xDF\xA3"
-CANCELED_ORDER_STATUSES = ("canceled", "cancelado", "cancelada", "cancelled")
-
-
-def _load_accessible_store_ids(db: Session, tenant_id: str, user: models.User) -> list[str]:
-    store_ids = user_accessible_store_ids(db=db, tenant_id=tenant_id, user=user)
-    if not store_ids:
-        raise HTTPException(status_code=403, detail="No store access")
-    return store_ids
-
-
-def _with_global_store_scope(store_column, allowed_store_ids: list[str]):
-    return or_(store_column.in_(allowed_store_ids), store_column.is_(None))
-
-
-def _resolve_store_id_for_write(
-    db: Session,
-    tenant_id: str,
-    user: models.User,
-    requested_store_id: str | None,
-) -> str:
-    allowed_store_ids = _load_accessible_store_ids(db, tenant_id, user)
-    if requested_store_id:
-        if requested_store_id not in allowed_store_ids:
-            raise HTTPException(status_code=403, detail="Store access denied")
-        return requested_store_id
-    if len(allowed_store_ids) == 1:
-        return allowed_store_ids[0]
-    raise HTTPException(status_code=400, detail="store_id is required")
-
-
-def _resolve_store_id_for_read(
-    db: Session,
-    tenant_id: str,
-    user: models.User,
-    requested_store_id: str | None,
-) -> str:
-    allowed_store_ids = _load_accessible_store_ids(db, tenant_id, user)
-    if requested_store_id:
-        if requested_store_id not in allowed_store_ids:
-            raise HTTPException(status_code=403, detail="Store access denied")
-        return requested_store_id
-    return allowed_store_ids[0]
-
-
-def _ensure_store_exists(db: Session, tenant_id: str, store_id: str) -> None:
-    exists = (
-        db.query(models.Store)
-        .filter(models.Store.id == store_id, models.Store.tenant_id == tenant_id)
-        .first()
-    )
-    if not exists:
-        raise HTTPException(status_code=404, detail="Store not found")
-
-
-def _ensure_category_in_store(db: Session, tenant_id: str, category_id: str, store_id: str) -> None:
-    category = (
-        db.query(models.Category)
-        .filter(
-            models.Category.id == category_id,
-            models.Category.tenant_id == tenant_id,
-            models.Category.store_id == store_id,
-        )
-        .first()
-    )
-    if not category:
-        raise HTTPException(status_code=400, detail="Invalid category for store")
-
-
-def _load_additional_rows_for_store(
-    db: Session,
-    tenant_id: str,
-    store_id: str,
-    additional_ids: list[str],
-) -> dict[str, models.Additional]:
-    ids = [item.strip() for item in additional_ids if item and item.strip()]
-    if not ids:
-        return {}
-    unique_ids = sorted(set(ids))
-    rows = (
-        db.query(models.Additional)
-        .filter(
-            models.Additional.tenant_id == tenant_id,
-            models.Additional.store_id == store_id,
-            models.Additional.id.in_(unique_ids),
-        )
-        .all()
-    )
-    by_id = {row.id: row for row in rows}
-    missing = [item for item in unique_ids if item not in by_id]
-    if missing:
-        raise HTTPException(status_code=400, detail=f"Invalid additional for store: {missing[0]}")
-    return by_id
-
-
-def _sync_product_additionals(
-    db: Session,
-    tenant_id: str,
-    product: models.Product,
-    target_store_id: str,
-    requested_additional_ids: list[str],
-) -> None:
-    requested_ids = sorted(set(item.strip() for item in requested_additional_ids if item and item.strip()))
-    _load_additional_rows_for_store(db, tenant_id, target_store_id, requested_ids)
-
-    current_links = (
-        db.query(models.ProductAdditional)
-        .filter(
-            models.ProductAdditional.tenant_id == tenant_id,
-            models.ProductAdditional.product_id == product.id,
-        )
-        .all()
-    )
-    current_ids = {link.additional_id for link in current_links}
-    requested_id_set = set(requested_ids)
-
-    for link in current_links:
-        if link.additional_id not in requested_id_set:
-            db.delete(link)
-
-    for additional_id in requested_id_set - current_ids:
-        db.add(
-            models.ProductAdditional(
-                tenant_id=tenant_id,
-                product_id=product.id,
-                additional_id=additional_id,
-            )
-        )
-
-
-def _drop_invalid_product_additionals_for_store(
-    db: Session,
-    tenant_id: str,
-    product: models.Product,
-    target_store_id: str,
-) -> None:
-    valid_ids = {
-        row[0]
-        for row in db.query(models.Additional.id).filter(
-            models.Additional.tenant_id == tenant_id,
-            models.Additional.store_id == target_store_id,
-        )
-    }
-    for link in list(product.additional_links):
-        if link.additional_id not in valid_ids:
-            db.delete(link)
-
-
-def _has_non_canceled_sales_for_products(db: Session, tenant_id: str, product_ids: list[str]) -> bool:
-    ids = [item for item in product_ids if item]
-    if not ids:
-        return False
-    canceled_status = func.lower(func.coalesce(models.Order.status, ""))
-    is_canceled = or_(
-        canceled_status.in_(CANCELED_ORDER_STATUSES),
-        canceled_status.like("%cancel%"),
-    )
-    row = (
-        db.query(models.OrderItem.id)
-        .join(models.Order, models.Order.id == models.OrderItem.order_id)
-        .filter(
-            models.OrderItem.tenant_id == tenant_id,
-            models.OrderItem.product_id.in_(ids),
-            ~is_canceled,
-        )
-        .first()
-    )
-    return row is not None
-
-
-def _has_sales_using_additional(
-    db: Session,
-    tenant_id: str,
-    additional_name: str,
-) -> bool:
-    normalized_name = (additional_name or "").strip()
-    if not normalized_name:
-        return False
-    row = (
-        db.query(models.OrderItem.id)
-        .filter(
-            models.OrderItem.tenant_id == tenant_id,
-            models.OrderItem.notes.isnot(None),
-            models.OrderItem.notes.ilike("%Adicionais:%"),
-            models.OrderItem.notes.ilike(f"%{normalized_name}%"),
-        )
-        .first()
-    )
-    return row is not None
-
-
-def _resolve_store_media_segment(db: Session, tenant_id: str, store_id: str | None) -> str:
-    if not store_id:
-        return "global"
-    row = (
-        db.query(models.Store.slug)
-        .filter(models.Store.tenant_id == tenant_id, models.Store.id == store_id)
-        .first()
-    )
-    slug = row[0] if row else None
-    return slug or store_id
-
-
-def _normalize_master_name(value: str | None) -> str:
-    name = (value or "").strip()
-    return name or "Produto"
-
-
-def _load_product_master_or_400(db: Session, tenant_id: str, product_master_id: str) -> models.ProductMaster:
-    master = (
-        db.query(models.ProductMaster)
-        .filter(
-            models.ProductMaster.id == product_master_id,
-            models.ProductMaster.tenant_id == tenant_id,
-        )
-        .first()
-    )
-    if not master:
-        raise HTTPException(status_code=400, detail="Invalid product_master_id")
-    return master
-
-
-def _create_local_product_master(db: Session, tenant_id: str, name_canonical: str) -> models.ProductMaster:
-    master = models.ProductMaster(
-        id=str(uuid.uuid4()),
-        tenant_id=tenant_id,
-        name_canonical=_normalize_master_name(name_canonical),
-        is_shared=False,
-    )
-    db.add(master)
-    db.flush()
-    return master
 
 
 @router.get("/product-masters", response_model=list[schemas.ProductMasterOut])
@@ -277,11 +44,7 @@ def list_product_masters(
     tenant: TenantContext = Depends(require_module_action("products", "view")),
     _: models.User = Depends(require_roles(models.UserRole.owner, models.UserRole.manager, models.UserRole.operator)),
 ):
-    query = db.query(models.ProductMaster).filter(models.ProductMaster.tenant_id == tenant.id)
-    if q and q.strip():
-        token = f"%{q.strip()}%"
-        query = query.filter(models.ProductMaster.name_canonical.ilike(token))
-    return query.order_by(asc(models.ProductMaster.name_canonical)).limit(limit).all()
+    return catalog_admin_svc.list_product_masters(db=db, tenant_id=tenant.id, q=q, limit=limit)
 
 
 @router.post("/product-masters", response_model=schemas.ProductMasterOut, status_code=201)
@@ -291,32 +54,7 @@ def create_product_master(
     tenant: TenantContext = Depends(require_module_action("products", "edit")),
     _: models.User = Depends(require_roles(models.UserRole.owner, models.UserRole.manager, models.UserRole.operator)),
 ):
-    name_canonical = _normalize_master_name(payload.name_canonical)
-    sku_global = (payload.sku_global or "").strip() or None
-
-    if sku_global:
-        duplicated_sku = (
-            db.query(models.ProductMaster.id)
-            .filter(
-                models.ProductMaster.tenant_id == tenant.id,
-                models.ProductMaster.sku_global == sku_global,
-            )
-            .first()
-        )
-        if duplicated_sku:
-            raise HTTPException(status_code=400, detail="sku_global already exists")
-
-    master = models.ProductMaster(
-        id=str(uuid.uuid4()),
-        tenant_id=tenant.id,
-        name_canonical=name_canonical,
-        sku_global=sku_global,
-        is_shared=payload.is_shared,
-    )
-    db.add(master)
-    db.commit()
-    db.refresh(master)
-    return master
+    return catalog_admin_svc.create_product_master(db=db, tenant_id=tenant.id, payload=payload)
 
 
 @router.post("/categories", response_model=schemas.CategoryOut, status_code=201)
@@ -326,33 +64,7 @@ def create_category(
     tenant: TenantContext = Depends(require_module_action("products", "edit")),
     user: models.User = Depends(require_roles(models.UserRole.owner, models.UserRole.manager, models.UserRole.operator)),
 ):
-    target_store_id = _resolve_store_id_for_write(db, tenant.id, user, payload.store_id)
-    _ensure_store_exists(db, tenant.id, target_store_id)
-
-    exists = (
-        db.query(models.Category)
-        .filter(
-            models.Category.tenant_id == tenant.id,
-            models.Category.store_id == target_store_id,
-            models.Category.name == payload.name,
-        )
-        .first()
-    )
-    if exists:
-        raise HTTPException(status_code=400, detail="Category already exists")
-
-    category = models.Category(
-        id=str(uuid.uuid4()),
-        tenant_id=tenant.id,
-        store_id=target_store_id,
-        name=payload.name,
-        is_active=payload.is_active,
-        display_order=payload.display_order,
-    )
-    db.add(category)
-    db.commit()
-    db.refresh(category)
-    return category
+    return catalog_admin_svc.create_category(db=db, tenant_id=tenant.id, user=user, payload=payload)
 
 
 @router.patch("/categories/{category_id}", response_model=schemas.CategoryOut)
@@ -363,48 +75,9 @@ def update_category(
     tenant: TenantContext = Depends(require_module_action("products", "edit")),
     user: models.User = Depends(require_roles(models.UserRole.owner, models.UserRole.manager, models.UserRole.operator)),
 ):
-    allowed_store_ids = _load_accessible_store_ids(db, tenant.id, user)
-    category = (
-        db.query(models.Category)
-        .filter(
-            models.Category.id == category_id,
-            models.Category.tenant_id == tenant.id,
-            _with_global_store_scope(models.Category.store_id, allowed_store_ids),
-        )
-        .first()
+    return catalog_admin_svc.update_category(
+        db=db, tenant_id=tenant.id, user=user, category_id=category_id, payload=payload
     )
-    if not category:
-        raise HTTPException(status_code=404, detail="Category not found")
-
-    target_store_id = category.store_id
-    if payload.store_id is not None:
-        target_store_id = _resolve_store_id_for_write(db, tenant.id, user, payload.store_id)
-
-    next_name = payload.name if payload.name is not None else category.name
-    duplicate = (
-        db.query(models.Category)
-        .filter(
-            models.Category.tenant_id == tenant.id,
-            models.Category.store_id == target_store_id,
-            models.Category.name == next_name,
-            models.Category.id != category.id,
-        )
-        .first()
-    )
-    if duplicate:
-        raise HTTPException(status_code=400, detail="Category already exists")
-
-    category.store_id = target_store_id
-    if payload.name is not None:
-        category.name = payload.name
-    if payload.display_order is not None:
-        category.display_order = payload.display_order
-    if payload.is_active is not None:
-        category.is_active = payload.is_active
-
-    db.commit()
-    db.refresh(category)
-    return category
 
 
 @router.delete("/categories/{category_id}", status_code=204)
@@ -414,32 +87,7 @@ def delete_category(
     tenant: TenantContext = Depends(require_module_action("products", "edit")),
     user: models.User = Depends(require_roles(models.UserRole.owner, models.UserRole.manager, models.UserRole.operator)),
 ):
-    allowed_store_ids = _load_accessible_store_ids(db, tenant.id, user)
-    category = (
-        db.query(models.Category)
-        .filter(
-            models.Category.id == category_id,
-            models.Category.tenant_id == tenant.id,
-            _with_global_store_scope(models.Category.store_id, allowed_store_ids),
-        )
-        .first()
-    )
-    if not category:
-        raise HTTPException(status_code=404, detail="Category not found")
-    category_product_ids = [
-        row[0]
-        for row in db.query(models.Product.id).filter(
-            models.Product.tenant_id == tenant.id,
-            models.Product.category_id == category.id,
-        )
-    ]
-    if _has_non_canceled_sales_for_products(db, tenant.id, category_product_ids):
-        raise HTTPException(
-            status_code=400,
-            detail="Nao foi possivel excluir a categoria: existem vendas vinculadas aos produtos desta categoria.",
-        )
-    db.delete(category)
-    db.commit()
+    catalog_admin_svc.delete_category(db=db, tenant_id=tenant.id, user=user, category_id=category_id)
 
 
 @router.get("/additionals", response_model=list[schemas.AdditionalOut])
@@ -449,13 +97,7 @@ def list_additionals(
     tenant: TenantContext = Depends(require_module_action("products", "view")),
     user: models.User = Depends(require_roles(models.UserRole.owner, models.UserRole.manager, models.UserRole.operator)),
 ):
-    selected_store_id = _resolve_store_id_for_read(db, tenant.id, user, store_id)
-    return (
-        db.query(models.Additional)
-        .filter(models.Additional.tenant_id == tenant.id, models.Additional.store_id == selected_store_id)
-        .order_by(asc(models.Additional.display_order), asc(models.Additional.name))
-        .all()
-    )
+    return catalog_admin_svc.list_additionals(db=db, tenant_id=tenant.id, user=user, store_id=store_id)
 
 
 @router.post("/additionals", response_model=schemas.AdditionalOut, status_code=201)
@@ -465,38 +107,7 @@ def create_additional(
     tenant: TenantContext = Depends(require_module_action("products", "edit")),
     user: models.User = Depends(require_roles(models.UserRole.owner, models.UserRole.manager, models.UserRole.operator)),
 ):
-    target_store_id = _resolve_store_id_for_write(db, tenant.id, user, payload.store_id)
-    _ensure_store_exists(db, tenant.id, target_store_id)
-    name = (payload.name or "").strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="Name is required")
-
-    exists = (
-        db.query(models.Additional.id)
-        .filter(
-            models.Additional.tenant_id == tenant.id,
-            models.Additional.store_id == target_store_id,
-            models.Additional.name == name,
-        )
-        .first()
-    )
-    if exists:
-        raise HTTPException(status_code=400, detail="Additional already exists")
-
-    additional = models.Additional(
-        id=str(uuid.uuid4()),
-        tenant_id=tenant.id,
-        store_id=target_store_id,
-        name=name,
-        description=payload.description,
-        price_cents=payload.price_cents,
-        is_active=payload.is_active,
-        display_order=payload.display_order,
-    )
-    db.add(additional)
-    db.commit()
-    db.refresh(additional)
-    return additional
+    return catalog_admin_svc.create_additional(db=db, tenant_id=tenant.id, user=user, payload=payload)
 
 
 @router.patch("/additionals/{additional_id}", response_model=schemas.AdditionalOut)
@@ -507,47 +118,8 @@ def update_additional(
     tenant: TenantContext = Depends(require_module_action("products", "edit")),
     user: models.User = Depends(require_roles(models.UserRole.owner, models.UserRole.manager, models.UserRole.operator)),
 ):
-    allowed_store_ids = _load_accessible_store_ids(db, tenant.id, user)
-    additional = (
-        db.query(models.Additional)
-        .filter(
-            models.Additional.id == additional_id,
-            models.Additional.tenant_id == tenant.id,
-            _with_global_store_scope(models.Additional.store_id, allowed_store_ids),
-        )
-        .first()
-    )
-    if not additional:
-        raise HTTPException(status_code=404, detail="Additional not found")
-
-    target_store_id = additional.store_id
-    if payload.store_id is not None:
-        target_store_id = _resolve_store_id_for_write(db, tenant.id, user, payload.store_id)
-        if target_store_id != additional.store_id:
-            linked = (
-                db.query(models.ProductAdditional.product_id)
-                .filter(
-                    models.ProductAdditional.tenant_id == tenant.id,
-                    models.ProductAdditional.additional_id == additional.id,
-                )
-                .first()
-            )
-            if linked:
-                raise HTTPException(status_code=400, detail="Cannot change store of linked additional")
-
-    next_name = (payload.name if payload.name is not None else additional.name).strip()
-    if not next_name:
-        raise HTTPException(status_code=400, detail="Name is required")
-
-    duplicate = (
-        db.query(models.Additional.id)
-        .filter(
-            models.Additional.tenant_id == tenant.id,
-            models.Additional.store_id == target_store_id,
-            models.Additional.name == next_name,
-            models.Additional.id != additional.id,
-        )
-        .first()
+    return catalog_admin_svc.update_additional(
+        db=db, tenant_id=tenant.id, user=user, additional_id=additional_id, payload=payload
     )
     if duplicate:
         raise HTTPException(status_code=400, detail="Additional already exists")
@@ -733,15 +305,8 @@ def update_product(
     tenant: TenantContext = Depends(require_module_action("products", "edit")),
     user: models.User = Depends(require_roles(models.UserRole.owner, models.UserRole.manager, models.UserRole.operator)),
 ):
-    allowed_store_ids = _load_accessible_store_ids(db, tenant.id, user)
-    product = (
-        db.query(models.Product)
-        .filter(
-            models.Product.id == product_id,
-            models.Product.tenant_id == tenant.id,
-            _with_global_store_scope(models.Product.store_id, allowed_store_ids),
-        )
-        .first()
+    return catalog_admin_svc.update_product(
+        db=db, tenant_id=tenant.id, user=user, product_id=product_id, payload=payload
     )
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -847,26 +412,7 @@ def update_product(
     return product
 
 
-@router.post("/products/{product_id}/image", response_model=schemas.ProductOut)
-def upload_product_image(
-    product_id: str,
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    tenant: TenantContext = Depends(require_module_action("products", "edit")),
-    user: models.User = Depends(require_roles(models.UserRole.owner, models.UserRole.manager, models.UserRole.operator)),
-):
-    allowed_store_ids = _load_accessible_store_ids(db, tenant.id, user)
-    product = (
-        db.query(models.Product)
-        .filter(
-            models.Product.id == product_id,
-            models.Product.tenant_id == tenant.id,
-            _with_global_store_scope(models.Product.store_id, allowed_store_ids),
-        )
-        .first()
-    )
-    if not product:
-        raise HTTPException(status_code=404, detail="Product not found")
+def _validate_image_upload(file: UploadFile, contents: bytes) -> str:
     file_name = (file.filename or "").lower()
     expected_ext = ALLOWED_IMAGE_TYPES.get(file.content_type or "")
     if not expected_ext:
@@ -878,13 +424,10 @@ def upload_product_image(
             expected_ext = "webp"
     if not expected_ext:
         raise HTTPException(status_code=400, detail="Unsupported image type")
-
-    contents = file.file.read(MAX_IMAGE_BYTES + 1)
     if not contents:
         raise HTTPException(status_code=400, detail="Empty image file")
     if len(contents) > MAX_IMAGE_BYTES:
         raise HTTPException(status_code=400, detail="Image too large (max 5MB)")
-
     detected_ext = None
     if contents.startswith(PNG_SIGNATURE):
         detected_ext = "png"
@@ -912,26 +455,7 @@ def upload_product_image(
     return product
 
 
-@router.post("/products/{product_id}/video", response_model=schemas.ProductOut)
-def upload_product_video(
-    product_id: str,
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    tenant: TenantContext = Depends(require_module_action("products", "edit")),
-    user: models.User = Depends(require_roles(models.UserRole.owner, models.UserRole.manager, models.UserRole.operator)),
-):
-    allowed_store_ids = _load_accessible_store_ids(db, tenant.id, user)
-    product = (
-        db.query(models.Product)
-        .filter(
-            models.Product.id == product_id,
-            models.Product.tenant_id == tenant.id,
-            _with_global_store_scope(models.Product.store_id, allowed_store_ids),
-        )
-        .first()
-    )
-    if not product:
-        raise HTTPException(status_code=404, detail="Product not found")
+def _validate_video_upload(file: UploadFile, contents: bytes) -> str:
     file_name = (file.filename or "").lower()
     expected_ext = ALLOWED_VIDEO_TYPES.get(file.content_type or "")
     if not expected_ext:
@@ -941,13 +465,10 @@ def upload_product_video(
             expected_ext = "webm"
     if not expected_ext:
         raise HTTPException(status_code=400, detail="Unsupported video type")
-
-    contents = file.file.read(MAX_VIDEO_BYTES + 1)
     if not contents:
         raise HTTPException(status_code=400, detail="Empty video file")
     if len(contents) > MAX_VIDEO_BYTES:
         raise HTTPException(status_code=400, detail="Video too large (max 20MB)")
-
     detected_ext = None
     if contents.startswith(WEBM_SIGNATURE):
         detected_ext = "webm"
@@ -955,17 +476,49 @@ def upload_product_video(
         detected_ext = "mp4"
     if detected_ext != expected_ext:
         raise HTTPException(status_code=400, detail="Invalid video file")
+    return detected_ext
 
-    ext = detected_ext
+
+@router.post("/products/{product_id}/image", response_model=schemas.ProductOut)
+def upload_product_image(
+    product_id: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(require_module_action("products", "edit")),
+    user: models.User = Depends(require_roles(models.UserRole.owner, models.UserRole.manager, models.UserRole.operator)),
+):
+    product = catalog_admin_svc.get_product_for_edit(db=db, tenant_id=tenant.id, user=user, product_id=product_id)
+    contents = file.file.read(MAX_IMAGE_BYTES + 1)
+    ext = _validate_image_upload(file, contents)
     filename = f"{uuid.uuid4()}.{ext}"
-    store_segment = _resolve_store_media_segment(db, tenant.id, product.store_id)
+    store_segment = catalog_admin_svc.resolve_store_media_segment(db, tenant.id, product.store_id)
     key = build_media_key("tenants", tenant.slug, "stores", store_segment, "products", product.id, filename)
+    storage_delete_by_url(product.image_url)
+    url = storage_save(key, contents, file.content_type)
+    return catalog_admin_svc.update_product_media_url(
+        db=db, tenant_id=tenant.id, user=user, product_id=product_id, field="image_url", url=url
+    )
 
+
+@router.post("/products/{product_id}/video", response_model=schemas.ProductOut)
+def upload_product_video(
+    product_id: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(require_module_action("products", "edit")),
+    user: models.User = Depends(require_roles(models.UserRole.owner, models.UserRole.manager, models.UserRole.operator)),
+):
+    product = catalog_admin_svc.get_product_for_edit(db=db, tenant_id=tenant.id, user=user, product_id=product_id)
+    contents = file.file.read(MAX_VIDEO_BYTES + 1)
+    ext = _validate_video_upload(file, contents)
+    filename = f"{uuid.uuid4()}.{ext}"
+    store_segment = catalog_admin_svc.resolve_store_media_segment(db, tenant.id, product.store_id)
+    key = build_media_key("tenants", tenant.slug, "stores", store_segment, "products", product.id, filename)
     storage_delete_by_url(product.video_url)
-    product.video_url = storage_save(key, contents, file.content_type)
-    db.commit()
-    db.refresh(product)
-    return product
+    url = storage_save(key, contents, file.content_type)
+    return catalog_admin_svc.update_product_media_url(
+        db=db, tenant_id=tenant.id, user=user, product_id=product_id, field="video_url", url=url
+    )
 
 
 @router.delete("/products/{product_id}", status_code=204)
@@ -1007,47 +560,9 @@ def get_admin_catalog(
     tenant: TenantContext = Depends(require_module_action("products", "view")),
     user: models.User = Depends(require_roles(models.UserRole.owner, models.UserRole.manager, models.UserRole.operator)),
 ):
-    selected_store_id = _resolve_store_id_for_read(db, tenant.id, user, store_id)
-
-    categories = (
-        db.query(models.Category)
-        .filter(
-            models.Category.tenant_id == tenant.id,
-            (models.Category.store_id == selected_store_id) | (models.Category.store_id.is_(None)),
-        )
-        .order_by(asc(models.Category.display_order), asc(models.Category.name))
-        .all()
+    return catalog_admin_svc.get_catalog_for_admin(
+        db=db,
+        tenant_id=tenant.id,
+        user=user,
+        store_id=store_id,
     )
-    products = (
-        db.query(models.Product)
-        .options(selectinload(models.Product.additional_links))
-        .filter(
-            models.Product.tenant_id == tenant.id,
-            (models.Product.store_id == selected_store_id) | (models.Product.store_id.is_(None)),
-        )
-        .order_by(
-            asc(models.Product.category_id),
-            asc(models.Product.display_order),
-            asc(models.Product.name),
-        )
-        .all()
-    )
-    additionals = (
-        db.query(models.Additional)
-        .filter(
-            models.Additional.tenant_id == tenant.id,
-            or_(models.Additional.store_id == selected_store_id, models.Additional.store_id.is_(None)),
-        )
-        .order_by(
-            asc(models.Additional.display_order),
-            asc(models.Additional.name),
-        )
-        .all()
-    )
-    return {
-        "categories": categories,
-        "products": products,
-        "additionals": additionals,
-        "selected_store_id": selected_store_id,
-    }
-

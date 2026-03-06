@@ -13,6 +13,7 @@ Todo conteudo foi escrito para permitir continuidade por qualquer IA ou pessoa s
 6. `development-standards.md`
 7. `security.md`
 8. `performance.md`
+9. `visual-identity.md`
 
 ## 2. Objetivo de Cada Documento
 
@@ -58,7 +59,7 @@ Grupos principais:
 - Billing webhook: `BILLING_WEBHOOK_SECRET`, `BILLING_WEBHOOK_SECRETS`
 - Storage: `STORAGE_BACKEND`, `S3_BUCKET`, `S3_REGION`, `S3_ENDPOINT_URL`, `S3_PUBLIC_BASE_URL`
 - Rate limit: `RATE_LIMIT_REDIS_URL` ou `REDIS_URL`
-- WhatsApp: `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_WEBHOOK_VERIFY_TOKEN`
+- WhatsApp: `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_WEBHOOK_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET` (App Secret da Meta para validar `X-Hub-Signature-256` no POST)
 - Web push: `WEB_PUSH_PUBLIC_KEY`, `WEB_PUSH_PRIVATE_KEY`, `WEB_PUSH_SUBJECT`
 - Frontend: `API_URL`, `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_TENANT_SLUG`, `NEXT_PUBLIC_SUPER_ADMIN_SLUG`
 

@@ -1,111 +1,23 @@
-import asyncio
-import json
-import os
-import uuid
+"""
+Router de checkout: orquestra request/response e notificações em background.
+Toda a lógica de negócio e persistência está em app.services.checkout.
+"""
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Dict
+import os
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from sqlalchemy import or_
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.db import get_db, SessionLocal
-from app.domain.core.enums import CampaignType
-from app.domain.config.order_statuses import default_order_status, load_order_statuses
-from app.domain.shipping.store_calendar import load_store_closed_dates
-from app.domain.shipping.store_hours import load_store_operating_hours
-from app.domain.shipping.store_timezone import tzinfo_for_store
-from app.domain.config.payment_methods import load_payment_methods
-from app.domain.config.shipping_method import load_shipping_method
-from app.domain.catalog.availability import is_available_for_sale
 from app.tenancy import TenantContext, get_tenant_context
-from app.security import create_order_tracking_token
-from app.phone import normalize_phone, phone_candidates
+from app.services.checkout import place_order, preview_order
 from app.services.order_message import format_order_message
 from app.services.webpush import send_order_push_notifications
-from app.services.shipping_distance import (
-    distance_from_store,
-    shipping_override_for_postal_code,
-    tier_amount_for_km,
-)
 
 router = APIRouter(prefix="/checkout", tags=["checkout"])
 logger = logging.getLogger(__name__)
-
-
-def gen_id() -> str:
-    return str(uuid.uuid4())
-
-
-def _normalize_postal_code(value: str | None) -> str | None:
-    if not value:
-        return None
-    digits = "".join(ch for ch in str(value) if ch.isdigit())
-    if not digits:
-        return None
-    return digits[:8]
-
-
-def _format_address_for_shipping(addr: schemas.AddressIn | None) -> str | None:
-    if not addr:
-        return None
-    parts: list[str] = []
-    street = (addr.street or "").strip()
-    number = (addr.number or "").strip()
-    if street:
-        parts.append(f"{street}, {number}" if number else street)
-    district = (addr.district or "").strip()
-    if district:
-        parts.append(district)
-    city = (addr.city or "").strip()
-    state = (addr.state or "").strip()
-    if city:
-        parts.append(f"{city} - {state}" if state else city)
-    postal = (_normalize_postal_code(addr.postal_code) or "").strip()
-    if postal:
-        parts.append(postal)
-    parts.append("Brasil")
-    output = ", ".join(p for p in parts if p)
-    return output or None
-
-
-def _compute_shipping_cents(
-    *,
-    db: Session,
-    tenant_id: str,
-    store: models.Store,
-    payload: schemas.CheckoutIn,
-) -> int | None:
-    if payload.pickup:
-        return 0
-    if load_shipping_method(getattr(store, "shipping_method", None)) != "distance":
-        raise HTTPException(400, "Metodo de frete nao suportado")
-    if not payload.address:
-        raise HTTPException(400, "Address required for delivery")
-
-    override = shipping_override_for_postal_code(db, tenant_id, payload.address.postal_code)
-    if override is not None:
-        return int(override)
-
-    dest_address = _format_address_for_shipping(payload.address)
-    km = asyncio.run(
-        distance_from_store(
-            db,
-            tenant_id=tenant_id,
-            store_id=store.id,
-            dest_address=dest_address,
-        )
-    )
-    if km is None:
-        return None
-    amount = tier_amount_for_km(db, tenant_id, km, store_id=store.id)
-    if amount is None:
-        return None
-    fixed_fee = int(getattr(store, "shipping_fixed_fee_cents", 0) or 0)
-    return int(amount) + fixed_fee
 
 
 async def _send_telegram_message(text: str) -> None:
@@ -131,16 +43,16 @@ async def _send_telegram_message(text: str) -> None:
                 response.raise_for_status()
                 return
         except httpx.HTTPStatusError as exc:
-            body = exc.response.text
             logger.warning(
                 "Telegram send failed (attempt %s) status=%s body=%s",
                 attempt + 1,
                 exc.response.status_code,
-                body,
+                exc.response.text,
             )
         except Exception:
             logger.exception("Failed to send Telegram message (attempt %s)", attempt + 1)
             if attempt < len(backoffs):
+                import asyncio
                 await asyncio.sleep(backoffs[attempt])
             else:
                 return
@@ -191,18 +103,16 @@ async def _send_telegram_message_for_tenant(tenant_id: str, text: str) -> None:
                     response.raise_for_status()
                     return
             except httpx.HTTPStatusError as exc:
-                body = exc.response.text
                 logger.warning(
                     "Telegram send failed (attempt %s) status=%s body=%s",
                     attempt + 1,
                     exc.response.status_code,
-                    body,
+                    exc.response.text,
                 )
             except Exception:
                 logger.exception("Failed to send Telegram message (attempt %s)", attempt + 1)
                 if attempt < len(backoffs):
                     import asyncio
-
                     await asyncio.sleep(backoffs[attempt])
                 else:
                     return
@@ -863,41 +773,12 @@ def _reserve_stock(
 
 
 @router.post("/preview", response_model=schemas.CheckoutPreviewOut)
-def preview_order(
+def preview_order_endpoint(
     payload: schemas.CheckoutPreviewIn,
     db: Session = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
-    if not payload.items:
-        raise HTTPException(400, "Empty cart")
-
-    store = _get_store_or_default(db, tenant.id, payload.store_id)
-    subtotal, item_amounts, _, _ = _calc_subtotal_and_items(db, tenant.id, store.id, payload.items)
-    shipping_cents = int(payload.shipping_cents or 0)
-    coupon_code = (payload.coupon_code or "").strip().upper()
-
-    campaigns = _load_campaigns_for_checkout(db, tenant.id, coupon_code or None)
-    applied_campaigns, discount_cents, adjusted_shipping, _ = _pick_campaigns_and_apply(
-        db=db,
-        campaigns=campaigns,
-        subtotal_cents=subtotal,
-        shipping_cents=shipping_cents,
-        items=item_amounts,
-        coupon_required=bool(coupon_code),
-        store_id=store.id,
-        pickup=payload.pickup,
-        customer_id=None,
-    )
-
-    total = max(subtotal + adjusted_shipping - discount_cents, 0)
-    campaign = applied_campaigns[0] if applied_campaigns else None
-    return {
-        "subtotal_cents": subtotal,
-        "shipping_cents": adjusted_shipping,
-        "discount_cents": discount_cents,
-        "total_cents": total,
-        "campaign": campaign,
-    }
+    return preview_order(db, tenant.id, payload)
 
 
 @router.post("", response_model=schemas.OrderSummaryOut)
@@ -907,319 +788,40 @@ def create_order(
     db: Session = Depends(get_db),
     tenant: TenantContext = Depends(get_tenant_context),
 ):
-    if not payload.items:
-        raise HTTPException(400, "Empty cart")
-
-    store = _get_store_or_default(db, tenant.id, payload.store_id)
-    store_open_now = _store_open_now(store)
-    allow_preorder_when_closed = bool(getattr(store, "allow_preorder_when_closed", True))
-    if not store_open_now and not allow_preorder_when_closed:
-        raise HTTPException(400, "Loja fechada no momento e encomendas desabilitadas")
-    if not store_open_now and allow_preorder_when_closed and not bool(payload.preorder_confirmed):
-        local_today = _store_today(store)
-        next_open_date = _next_store_open_date(store, local_today)
-        raise HTTPException(
-            409,
-            detail={
-                "code": "PREORDER_CONFIRM_REQUIRED",
-                "message": "Loja fechada no momento. Confirme para enviar como encomenda.",
-                "next_open_date": next_open_date.isoformat() if next_open_date else None,
-            },
-        )
-    if not payload.pickup and not store.is_delivery:
-        raise HTTPException(400, "Loja selecionada nA£o aceita entregas")
-
-    coupon_code = (payload.coupon_code or "").strip().upper()
-    local_today = _store_today(store)
-    delivery_date = payload.delivery_date or local_today
-    if delivery_date < local_today:
-        raise HTTPException(400, "Data de entrega invalida")
-    _validate_delivery_date_open(store, delivery_date)
-
-    normalized_phone = normalize_phone(payload.phone)
-    if not normalized_phone:
-        raise HTTPException(400, "Invalid phone")
-    candidates = phone_candidates(payload.phone)
-    if not candidates:
-        candidates = [normalized_phone]
-    customer = (
-        db.query(models.Customer)
-        .filter(
-            models.Customer.tenant_id == tenant.id,
-            models.Customer.phone.in_(candidates),
-        )
-        .first()
-    )
-    if not customer:
-        customer = models.Customer(
-            id=gen_id(),
-            tenant_id=tenant.id,
-            origin_store_id=store.id,
-            name=payload.name,
-            phone=normalized_phone,
-        )
-        db.add(customer)
-        db.flush()
-    elif not customer.origin_store_id:
-        customer.origin_store_id = store.id
-    elif customer.phone != normalized_phone:
-        existing = (
-            db.query(models.Customer)
-            .filter(
-                models.Customer.tenant_id == tenant.id,
-                models.Customer.phone == normalized_phone,
-            )
-            .first()
-        )
-        if not existing or existing.id == customer.id:
-            customer.phone = normalized_phone
-
-    address_id = None
-    address_text = "(pickup at store)"
-    shipping_cents_payload = int(payload.shipping_cents or 0)
-    shipping_cents = 0
-    if payload.pickup and shipping_cents_payload != 0:
-        raise HTTPException(400, "Shipping must be zero for pickup orders")
-
-    if not payload.pickup:
-        if not payload.address:
-            raise HTTPException(400, "Address required for delivery")
-        addr = payload.address
-        normalized_postal = _normalize_postal_code(addr.postal_code)
-        if not normalized_postal or len(normalized_postal) != 8:
-            raise HTTPException(400, "CEP invalido")
-        address = models.CustomerAddress(
-            id=gen_id(),
-            tenant_id=tenant.id,
-            customer_id=customer.id,
-            postal_code=normalized_postal,
-            street=addr.street,
-            number=addr.number,
-            complement=addr.complement,
-            district=addr.district,
-            city=addr.city,
-            state=addr.state,
-            reference=addr.reference,
-            is_preferred=True,
-        )
-        db.add(address)
-        db.flush()
-        address_id = address.id
-        complement = f" ({addr.complement})" if addr.complement else ""
-        reference = f" | Ref: {addr.reference}" if addr.reference else ""
-        district = addr.district or ""
-        postal_label = normalized_postal or (addr.postal_code or "")
-        address_text = (
-            f"{addr.street}, {addr.number}{complement}\n"
-            f"{district} - {addr.city}/{addr.state}\n"
-            f"CEP: {postal_label}{reference}"
-        )
-
-        computed_shipping = _compute_shipping_cents(
-            db=db,
-            tenant_id=tenant.id,
-            store=store,
-            payload=payload,
-        )
-        if computed_shipping is not None:
-            if computed_shipping != shipping_cents_payload:
-                raise HTTPException(400, "Invalid shipping amount")
-            shipping_cents = computed_shipping
-        else:
-            logger.warning("Shipping not verified; using payload for tenant=%s order=%s", tenant.id, "new")
-            shipping_cents = shipping_cents_payload
-
-    subtotal, item_amounts, products_cache, item_details = _calc_subtotal_and_items(
-        db, tenant.id, store.id, payload.items
-    )
-
-    campaigns = _load_campaigns_for_checkout(db, tenant.id, coupon_code or None)
-    applied_campaigns, discount_cents, adjusted_shipping, gift_items = _pick_campaigns_and_apply(
-        db=db,
-        campaigns=campaigns,
-        subtotal_cents=subtotal,
-        shipping_cents=shipping_cents,
-        items=item_amounts,
-        coupon_required=bool(coupon_code),
-        store_id=store.id,
-        pickup=payload.pickup,
-        customer_id=customer.id,
-    )
-
-    for campaign in applied_campaigns:
-        if campaign.usage_limit is not None and campaign.usage_count >= campaign.usage_limit:
-            raise HTTPException(400, "Campanha esgotada")
-
-    # reserve stock for ordered items
-    _reserve_stock(db, tenant.id, store.id, payload.items, products_cache)
-
-    # reserve stock for gift items
-    gift_payload_items: list[schemas.ItemIn] = []
-    gift_products_cache: Dict[str, models.Product] = {}
-    for gift in gift_items:
-        product_id = gift.get("product_id")
-        quantity = int(gift.get("quantity") or 0)
-        if not product_id or quantity <= 0:
-            continue
-        product = (
-            db.query(models.Product)
-            .filter(
-                models.Product.id == product_id,
-                models.Product.tenant_id == tenant.id,
-                models.Product.is_active.is_(True),
-                or_(models.Product.store_id == store.id, models.Product.store_id.is_(None)),
-            )
-            .first()
-        )
-        if not product or not is_available_for_sale(
-            getattr(product, "availability_status", None),
-            getattr(product, "block_sale", None),
-        ):
-            continue
-        gift_products_cache[product_id] = product
-        gift_payload_items.append(schemas.ItemIn(product_id=product_id, quantity=quantity))
-
-    if gift_payload_items:
-        _reserve_stock(db, tenant.id, store.id, gift_payload_items, gift_products_cache)
-
-    items_payload: list[dict] = []
-    for idx, item in enumerate(payload.items):
-        product = products_cache[item.product_id]
-        detail = item_details[idx] if idx < len(item_details) else {"unit_price_cents": product.price_cents, "additional_names": []}
-        display_name = item.custom_name or product.name or "Produto customizado"
-        additional_names = detail.get("additional_names") or []
-        if additional_names:
-            display_name = f"{display_name} (+{', '.join(additional_names)})"
-        items_payload.append(
-            {
-                "name": display_name,
-                "quantity": item.quantity,
-                "unit_price_cents": int(detail.get("unit_price_cents") or 0),
-            }
-        )
-
-    for gift in gift_payload_items:
-        product = gift_products_cache[gift.product_id]
-        items_payload.append(
-            {
-                "name": f"{product.name} (Brinde)",
-                "quantity": gift.quantity,
-                "unit_price_cents": 0,
-            }
-        )
-
-    total = max(subtotal + adjusted_shipping - discount_cents, 0)
-
-    order_statuses = _load_order_statuses(db, tenant.id, store)
-    order = models.Order(
-        id=gen_id(),
-        tenant_id=tenant.id,
-        customer_id=customer.id,
-        address_id=address_id,
-        subtotal_cents=subtotal,
-        discount_cents=discount_cents,
-        campaign_id=applied_campaigns[0].id if applied_campaigns else None,
-        shipping_cents=adjusted_shipping,
-        total_cents=total,
-        delivery_date=delivery_date,
-        status=default_order_status(order_statuses),
-        delivery_window_start=payload.delivery_window_start,
-        delivery_window_end=payload.delivery_window_end,
-        notes=payload.notes,
-        store_id=store.id,
-    )
-    db.add(order)
-    db.flush()
-
-    for campaign in applied_campaigns:
-        campaign.usage_count += 1
-
-    for idx, item in enumerate(payload.items):
-        product = products_cache[item.product_id]
-        detail = item_details[idx] if idx < len(item_details) else {}
-        notes = detail.get("notes")
-        db.add(
-            models.OrderItem(
-                id=gen_id(),
-                tenant_id=tenant.id,
-                order_id=order.id,
-                product_id=product.id,
-                quantity=item.quantity,
-                unit_price_cents=int(detail.get("unit_price_cents") or product.price_cents),
-                notes=notes,
-            )
-        )
-
-    for gift in gift_payload_items:
-        product = gift_products_cache.get(gift.product_id)
-        if not product:
-            continue
-        db.add(
-            models.OrderItem(
-                id=gen_id(),
-                tenant_id=tenant.id,
-                order_id=order.id,
-                product_id=product.id,
-                quantity=gift.quantity,
-                unit_price_cents=0,
-                notes="BRINDE",
-            )
-        )
-
-    method = payload.payment.method.lower()
-    allowed_methods = _load_payment_methods(db, tenant.id, store)
-    if method not in allowed_methods:
-        raise HTTPException(400, "Payment method not available")
-
-    payment = models.Payment(
-        id=gen_id(),
-        tenant_id=tenant.id,
-        order_id=order.id,
-        method=models.PaymentMethod(method),
-        status=models.PaymentStatus.pending,
-        amount_cents=total,
-    )
-    db.add(payment)
-
-    delivery = models.Delivery(
-        id=gen_id(),
-        tenant_id=tenant.id,
-        order_id=order.id,
-        status=models.DeliveryStatus.pending,
-    )
-    db.add(delivery)
-
-    db.commit()
+    result = place_order(db, tenant.id, payload)
 
     background.add_task(
         send_order_push_notifications,
         [
             {
-                "tenant_id": tenant.id,
-                "order_id": str(order.id),
-                "customer_name": customer.name,
-                "total_cents": total,
+                "tenant_id": result.tenant_id,
+                "order_id": result.order_id,
+                "customer_name": result.customer_name,
+                "total_cents": result.total_cents,
             }
         ],
     )
 
     message = format_order_message(
-        order_id=order.id,
-        customer_name=customer.name or "Customer",
-        phone=customer.phone or "-",
-        pickup=bool(payload.pickup),
-        address_text=address_text,
-        window_start=payload.delivery_window_start,
-        window_end=payload.delivery_window_end,
-        delivery_date=delivery_date.isoformat(),
-        items=items_payload,
-        payment_method=payload.payment.method,
-        subtotal_cents=subtotal,
-        shipping_cents=shipping_cents,
-        discount_cents=discount_cents,
-        total_cents=total,
+        order_id=result.order_id,
+        customer_name=result.customer_name,
+        phone=result.customer_phone,
+        pickup=result.pickup,
+        address_text=result.address_text,
+        window_start=result.delivery_window_start.isoformat() if result.delivery_window_start else None,
+        window_end=result.delivery_window_end.isoformat() if result.delivery_window_end else None,
+        delivery_date=result.delivery_date.isoformat(),
+        items=result.items_payload,
+        payment_method=result.payment_method,
+        subtotal_cents=result.subtotal_cents,
+        shipping_cents=result.shipping_cents,
+        discount_cents=result.discount_cents,
+        total_cents=result.total_cents,
     )
-    background.add_task(_send_telegram_message_for_tenant, tenant.id, message)
+    background.add_task(_send_telegram_message_for_tenant, result.tenant_id, message)
 
-    tracking_token = create_order_tracking_token(order.id, customer.phone or "")
-    return {"order_id": order.id, "total_cents": total, "tracking_token": tracking_token}
+    return {
+        "order_id": result.order_id,
+        "total_cents": result.total_cents,
+        "tracking_token": result.tracking_token,
+    }

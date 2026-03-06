@@ -14,6 +14,14 @@ import { usePathname } from "next/navigation";
 import { useOrgName } from "@/lib/use-org-name";
 import { clearAdminToken } from "@/lib/admin-auth";
 
+function RequiredLabel({ children }: { children: string }) {
+  return (
+    <span className="text-sm font-medium text-slate-800">
+      {children} <span className="text-red-600">*</span>
+    </span>
+  );
+}
+
 type FormState = {
   name: string;
   type: Campaign["type"];
@@ -142,6 +150,12 @@ function fmtDateShort(value?: string | null) {
   return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
+function fmtDateShort(value?: string | null) {
+  if (!value) return "-";
+  const d = new Date(value);
+  return d.toLocaleDateString("pt-BR");
+}
+
 export default function CampaignsAdmin() {
   const ready = useAdminGuard();
   const tenantName = useOrgName();
@@ -229,6 +243,26 @@ export default function CampaignsAdmin() {
     return Math.round(parsed * 100);
   }
 
+  /** Formata centavos para exibição R$ X,XX (sempre com ,00 se inteiro). */
+  function formatMinOrderDisplay(cents: number | string): string {
+    if (cents === "" || cents === null || cents === undefined) return "R$ 0,00";
+    const c = typeof cents === "number" ? cents : Number(cents);
+    if (!Number.isFinite(c) || c < 0) return "R$ 0,00";
+    const reais = Math.floor(c / 100);
+    const centavos = c % 100;
+    return `R$ ${reais},${centavos.toString().padStart(2, "0")}`;
+  }
+
+  function handleMinOrderChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const raw = e.target.value.replace(/[^0-9,]/g, "");
+    if (!raw) {
+      setForm((f) => ({ ...f, min_order_cents: "" }));
+      return;
+    }
+    const parsed = inputToCents(raw);
+    setForm((f) => ({ ...f, min_order_cents: parsed === "" ? "" : parsed }));
+  }
+
   function normalizeRuleConfigFromApi(config: RuleConfig | null | undefined): RuleConfig {
     if (!config || !Array.isArray(config.rules)) return defaultForm.rule_config;
     return {
@@ -294,6 +328,21 @@ export default function CampaignsAdmin() {
 
   async function save() {
     if (!canEditCampaigns) return;
+    const errors: Record<string, string> = {};
+    if (!form.name.trim()) errors.name = "Nome é obrigatório.";
+    if (form.type === "category_percent" && !form.category_id) errors.category_id = "Selecione a categoria.";
+    if (form.type === "rule") {
+      if (!form.rule_config?.rules?.length) errors.rule_config = "Adicione ao menos uma regra.";
+    }
+    setFieldErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      const firstKey = ["name", "category_id", "rule_config"].find((k) => errors[k]);
+      const el = firstKey && formRefs.current[firstKey];
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+      setError("Preencha os campos obrigatórios.");
+      return;
+    }
+    setError(null);
     try {
       setSaving(true);
       setError(null);
@@ -379,7 +428,8 @@ export default function CampaignsAdmin() {
       }
       if (bannerFile && campaignId && !removeBanner) {
         const formData = new FormData();
-        formData.append("file", bannerFile);
+        const blob = await cropBannerToBlob(bannerFile, bannerPositionY);
+        formData.append("file", blob, bannerFile.name);
         await adminUpload(`/admin/campaigns/${campaignId}/banner`, formData);
         if (bannerEnabledRequested && !bannerEnabledForPayload) {
           await adminFetch(`/admin/campaigns/${campaignId}`, {
@@ -396,6 +446,7 @@ export default function CampaignsAdmin() {
       setEditingId(null);
       setShowForm(false);
       resetBannerState();
+      setFieldErrors({});
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Falha ao salvar campanha");
@@ -547,6 +598,8 @@ export default function CampaignsAdmin() {
                       setEditingId(null);
                       setForm(defaultForm);
                       resetBannerState();
+                      setError(null);
+                      setFieldErrors({});
                     }}
                     disabled={!canEditCampaigns}
                     className="px-3 py-2 rounded-lg bg-[#6320ee] text-white text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
@@ -626,7 +679,7 @@ export default function CampaignsAdmin() {
                         </thead>
                         <tbody>
                           {visibleCampaigns.map((c, idx) => (
-                            <tr key={c.id} className={idx % 2 === 0 ? "bg-transparent" : "bg-slate-50"}>
+                            <tr key={c.id} className={idx % 2 === 0 ? "bg-transparent" : "bg-slate-50/50"}>
                               <td className="px-3 sm:px-4 py-2">
                                 <div className="font-semibold flex items-center gap-2 text-slate-900">
                                   {c.name}
@@ -692,6 +745,8 @@ export default function CampaignsAdmin() {
                   setEditingId(null);
                   setForm(defaultForm);
                   resetBannerState();
+                  setError(null);
+                  setFieldErrors({});
                 }}
                 className="text-sm px-3 py-1 rounded-full bg-neutral-100 border border-neutral-200 hover:bg-neutral-200"
               >
@@ -708,7 +763,7 @@ export default function CampaignsAdmin() {
                   <FieldTooltip text="Nome identificador da campanha (ex.: Black Friday)." />
                 </span>
                 <input
-                  className="input w-full"
+                  className={`input w-full ${fieldErrors.name ? "border-red-400 ring-1 ring-red-200" : ""}`}
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
                   aria-required
@@ -720,7 +775,7 @@ export default function CampaignsAdmin() {
                   <FieldTooltip text="Tipo de desconto: no total do pedido, no frete, por categoria ou por regras." />
                 </span>
                 <select
-                  className="input w-full"
+                  className={`input w-full ${fieldErrors.type ? "border-red-400 ring-1 ring-red-200" : ""}`}
                   value={form.type}
                   onChange={(e) => setForm({ ...form, type: e.target.value as FormState["type"], category_id: "" })}
                 >
@@ -754,7 +809,7 @@ export default function CampaignsAdmin() {
                     <FieldTooltip text="Categoria que receberá o desconto percentual." />
                   </span>
                   <select
-                    className="input w-full"
+                    className={`input w-full ${fieldErrors.category_id ? "border-red-400 ring-1 ring-red-200" : ""}`}
                     value={form.category_id}
                     onChange={(e) => setForm({ ...form, category_id: e.target.value })}
                   >
@@ -878,11 +933,12 @@ export default function CampaignsAdmin() {
             </div>
 
             {form.type === "rule" && (
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 space-y-4">
+              <div ref={(r) => { formRefs.current.rule_config = r; }} className="rounded-2xl border border-slate-200 bg-slate-50 p-3 space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Regras</p>
                     <p className="text-xs text-slate-600">Use E/OU nas condicoes e defina a acao.</p>
+                    {fieldErrors.rule_config && <p className="text-xs text-red-600 mt-1">{fieldErrors.rule_config}</p>}
                   </div>
                   <button
                     type="button"
@@ -1225,7 +1281,7 @@ export default function CampaignsAdmin() {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Banner</p>
-                  <p className="text-xs text-slate-600">Opcional</p>
+                  <p className="text-xs text-slate-600">Dimensões recomendadas: {BANNER_WIDTH}×{BANNER_HEIGHT} px (proporção 3:1). JPG, PNG ou WebP até 5MB.</p>
                 </div>
                 <label className="flex items-center gap-2 text-sm">
                   <input
@@ -1288,10 +1344,31 @@ export default function CampaignsAdmin() {
                     />
                   )}
                   {bannerPreview && (
-                    <div className="md:col-span-2 flex items-center gap-3">
-                      <div className="h-20 w-32 rounded-xl overflow-hidden border border-slate-200 bg-slate-50">
+                    <div className="md:col-span-2 space-y-2">
+                      <p className="text-xs font-medium text-slate-600">Pré-visualização (ajuste a posição antes de salvar)</p>
+                      <div
+                        className="w-full rounded-xl overflow-hidden border border-slate-200 bg-slate-100"
+                        style={{ aspectRatio: BANNER_ASPECT }}
+                      >
                         {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={bannerPreview} alt="Banner" className="h-full w-full object-cover" />
+                        <img
+                          src={bannerPreview}
+                          alt="Banner"
+                          className="w-full h-full object-cover object-center"
+                          style={{ objectPosition: `50% ${bannerPositionY}%` }}
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-slate-500">Posição vertical:</span>
+                        <input
+                          type="range"
+                          min={0}
+                          max={100}
+                          value={bannerPositionY}
+                          onChange={(e) => setBannerPositionY(Number(e.target.value))}
+                          className="flex-1 max-w-xs"
+                        />
+                        <span className="text-xs text-slate-600 w-8">{bannerPositionY}%</span>
                       </div>
                       <button
                         type="button"
