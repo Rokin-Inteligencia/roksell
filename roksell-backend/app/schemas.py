@@ -1,7 +1,7 @@
 from datetime import datetime, date
 from typing import List, Optional, Literal
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field, model_validator
 from app import models
 
 AvailabilityStatus = Literal["available", "order", "unavailable"]
@@ -24,12 +24,35 @@ class ProductOut(BaseModel):
     additionals_enabled: bool = False
     additional_ids: List[str] = Field(default_factory=list)
     image_url: Optional[str] = None
+    image_urls: List[str] = Field(default_factory=list)
     video_url: Optional[str] = None
+    video_position: Literal["start", "end"] = "end"
     category_id: Optional[str] = None
     display_order: int
 
     class Config:
         from_attributes = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_image_urls_from_model(cls, data: object) -> object:
+        if not hasattr(data, "image_urls") or not hasattr(data, "image_url"):
+            return data
+        urls = getattr(data, "image_urls") or (
+            [getattr(data, "image_url")] if getattr(data, "image_url") else []
+        )
+        pos = getattr(data, "video_position", None) or "end"
+        first_url = urls[0] if urls else getattr(data, "image_url")
+        if hasattr(data, "__table__"):
+            # SQLAlchemy model: build dict from column keys only
+            d = {c.key: getattr(data, c.key) for c in data.__table__.columns}
+            d["image_urls"] = urls
+            d["video_position"] = pos
+            d["image_url"] = first_url
+            if hasattr(data, "additional_links"):
+                d["additional_ids"] = [link.additional_id for link in data.additional_links]
+            return d
+        return data
 
 
 class CategoryOut(BaseModel):
@@ -51,6 +74,7 @@ class AdditionalOut(BaseModel):
     price_cents: int
     is_active: bool
     display_order: int
+    image_url: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -63,6 +87,7 @@ class CampaignBannerOut(BaseModel):
     banner_link_url: Optional[str] = None
     banner_position: Optional[str] = None
     banner_popup: bool
+    banner_display_order: int = 0
     starts_at: Optional[datetime] = None
     ends_at: Optional[datetime] = None
     created_at: datetime
@@ -329,7 +354,6 @@ class CampaignOut(BaseModel):
     name: str
     type: str
     value_percent: int
-    coupon_code: Optional[str] = None
     category_id: Optional[str] = None
     min_order_cents: Optional[int] = None
     starts_at: Optional[datetime] = None
@@ -338,7 +362,6 @@ class CampaignOut(BaseModel):
     usage_limit: Optional[int] = None
     usage_count: int
     apply_mode: Optional[str] = None
-    priority: Optional[int] = None
     rule_config: Optional[dict | str] = None
     store_ids: Optional[List[str]] = None
     banner_enabled: bool
@@ -346,6 +369,7 @@ class CampaignOut(BaseModel):
     banner_popup: bool
     banner_image_url: Optional[str] = None
     banner_link_url: Optional[str] = None
+    banner_display_order: Optional[int] = None
     created_at: datetime
 
     class Config:
@@ -356,7 +380,6 @@ class CampaignCreate(BaseModel):
     name: str
     type: str
     value_percent: int
-    coupon_code: Optional[str] = None
     category_id: Optional[str] = None
     min_order_cents: Optional[int] = None
     starts_at: Optional[datetime] = None
@@ -364,7 +387,6 @@ class CampaignCreate(BaseModel):
     is_active: bool = True
     usage_limit: Optional[int] = None
     apply_mode: Optional[str] = None
-    priority: Optional[int] = None
     rule_config: Optional[dict] = None
     store_ids: Optional[List[str]] = None
     banner_enabled: bool = False
@@ -372,13 +394,13 @@ class CampaignCreate(BaseModel):
     banner_popup: bool = False
     banner_image_url: Optional[str] = None
     banner_link_url: Optional[str] = None
+    banner_display_order: int = 0
 
 
 class CampaignUpdate(BaseModel):
     name: Optional[str] = None
     type: Optional[str] = None
     value_percent: Optional[int] = None
-    coupon_code: Optional[str] = None
     category_id: Optional[str] = None
     min_order_cents: Optional[int] = None
     starts_at: Optional[datetime] = None
@@ -386,7 +408,6 @@ class CampaignUpdate(BaseModel):
     is_active: Optional[bool] = None
     usage_limit: Optional[int] = None
     apply_mode: Optional[str] = None
-    priority: Optional[int] = None
     rule_config: Optional[dict] = None
     store_ids: Optional[List[str]] = None
     banner_enabled: Optional[bool] = None
@@ -394,6 +415,7 @@ class CampaignUpdate(BaseModel):
     banner_popup: Optional[bool] = None
     banner_image_url: Optional[str] = None
     banner_link_url: Optional[str] = None
+    banner_display_order: Optional[int] = None
 
     class Config:
         extra = "ignore"
@@ -722,7 +744,9 @@ class ProductCreate(BaseModel):
     block_sale: bool = False
     availability_status: Optional[AvailabilityStatus] = None
     image_url: Optional[str] = None
+    image_urls: Optional[List[str]] = None
     video_url: Optional[str] = None
+    video_position: Optional[Literal["start", "end"]] = None
     category_id: Optional[str] = None
     display_order: int = 0
     tags: Optional[str] = None
@@ -741,7 +765,9 @@ class ProductUpdate(BaseModel):
     block_sale: Optional[bool] = None
     availability_status: Optional[AvailabilityStatus] = None
     image_url: Optional[str] = None
+    image_urls: Optional[List[str]] = None
     video_url: Optional[str] = None
+    video_position: Optional[Literal["start", "end"]] = None
     category_id: Optional[str] = None
     display_order: Optional[int] = None
     tags: Optional[str] = None
@@ -796,6 +822,7 @@ class AdditionalUpdate(BaseModel):
     price_cents: Optional[int] = Field(default=None, ge=0)
     is_active: Optional[bool] = None
     display_order: Optional[int] = None
+    image_url: Optional[str] = None
 
 
 class ShippingDistanceTierIn(BaseModel):

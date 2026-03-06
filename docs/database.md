@@ -1,4 +1,4 @@
-﻿# Banco de Dados - Modelo, Tenancy e Migracoes
+# Banco de Dados - Modelo, Tenancy e Migracoes
 
 ## 1. Visao Geral
 
@@ -115,9 +115,10 @@ Implicacoes:
 ## 3.7 Campanhas
 
 - `campaigns`
-  - desconto por percentual/cupom/regra
-  - indices:
-    - `(tenant_id, coupon_code)`
+  - desconto por percentual/regra (cupom removido do cadastro; campanhas para políticas comerciais)
+  - coluna `priority` removida (migração 20260306)
+  - índices:
+    - `(tenant_id, coupon_code)` (legado; checkout ainda usa coupon)
     - `(tenant_id, is_active, starts_at, ends_at)`
 - `campaign_stores`
   - relacionamento campanha x loja

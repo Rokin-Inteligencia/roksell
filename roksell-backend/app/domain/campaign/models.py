@@ -32,9 +32,9 @@ class Campaign(Base):
     banner_popup: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     banner_image_url: Mapped[str | None] = mapped_column(Text)
     banner_link_url: Mapped[str | None] = mapped_column(Text)
+    banner_display_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     rule_config: Mapped[str | None] = mapped_column(Text)
     apply_mode: Mapped[str] = mapped_column(String(16), default="first", nullable=False)
-    priority: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped["DateTime"] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped["DateTime"] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False

@@ -18,7 +18,7 @@ from app.domain.config.payment_methods import load_payment_methods, normalize_pa
 from app.domain.config.shipping_method import load_shipping_method, normalize_shipping_method
 from app.domain.shipping.store_calendar import dump_store_closed_dates, load_store_closed_dates
 from app.domain.shipping.store_hours import dump_store_operating_hours, load_store_operating_hours
-from app.domain.shipping.store_timezone import DEFAULT_STORE_TIMEZONE, normalize_store_timezone
+from app.domain.shipping.store_timezone import DEFAULT_STORE_TIMEZONE, normalize_store_timezone_or_default
 from app.domain.tenancy.access import ensure_unique_store_slug, user_accessible_store_ids
 from app.auth.dependencies import require_module, require_roles
 from app.db import get_db
@@ -113,10 +113,8 @@ def _dump_operating_hours(payload: schemas.StoreCreate | schemas.StoreUpdate) ->
 
 
 def _normalize_timezone_or_400(value: str | None) -> str:
-    try:
-        return normalize_store_timezone(value)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Timezone invalida")
+    """Normaliza timezone; se inválido, usa default para evitar 400 (ex.: dados antigos ou digitação)."""
+    return normalize_store_timezone_or_default(value)
 
 
 def _apply_store_settings_payload(

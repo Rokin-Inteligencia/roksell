@@ -1,4 +1,4 @@
-﻿# Frontend - Arquitetura, Fluxos e Padroes
+# Frontend - Arquitetura, Fluxos e Padroes
 
 ## 1. Stack
 
@@ -17,6 +17,9 @@ Base: `roksell-frontend/src`
   - route handlers internos (`app/api/*`)
 - `components/`
   - componentes compartilhados e componentes admin
+  - `catalog/PriceInput.tsx`: campo de preço com preenchimento a partir dos centavos (portal catálogo)
+  - `admin/FieldTooltip.tsx`: ícone ? com tooltip para campos de formulário
+  - `admin/BannerCropModal.tsx`: ajuste de imagem de banner com zoom e dimensões pré-definidas (1200×400 px)
 - `lib/`
   - utilitarios HTTP, auth e hooks
 - `store/`
@@ -218,3 +221,9 @@ Configuracao:
 3. Definir guideline de mensagens de erro e estados de loading.
 4. Introduzir testes de smoke para rotas criticas (login, catalogo, checkout, pedidos).
 
+## 13. Pagina de Produtos (Portal Catalogo)
+
+- Rota: `/portal/catalog`. Abas: Produtos, Categorias, Adicionais (cada uma com listagem e filtro de status).
+- Produtos: ate 5 fotos em carrossel, video unico com posicao (inicio ou final). Campo preco: componente `PriceInput` (centavos-first).
+- Categorias: hierarquia aberta por padrao, minimizar por categoria; campo "Ordem de exibicao".
+- Adicionais: foto (upload) e mesmo formato de preco. Labels obrigatorio/opcional nos formularios.

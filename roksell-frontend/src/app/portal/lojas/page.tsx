@@ -221,6 +221,7 @@ export default function StoresAdminPage() {
     buildStatusColors(DEFAULT_ORDER_STATUSES)
   );
   const [coverFile, setCoverFile] = useState<File | null>(null);
+  const [coverUploadError, setCoverUploadError] = useState<string | null>(null);
   const [copiedStoreId, setCopiedStoreId] = useState<string | null>(null);
 
   const activeStores = useMemo(() => stores.filter((store) => store.is_active).length, [stores]);
@@ -468,10 +469,18 @@ export default function StoresAdminPage() {
       if (coverFile) {
         const formData = new FormData();
         formData.append("file", coverFile);
-        await adminUpload<Store>(`/admin/stores/${saved.id}/cover`, formData);
+        try {
+          await adminUpload<Store>(`/admin/stores/${saved.id}/cover`, formData);
+        } catch (uploadErr) {
+          const msg = uploadErr instanceof Error ? uploadErr.message : "Falha ao enviar imagem da loja.";
+          setCoverUploadError(msg);
+          setLoading(false);
+          return;
+        }
       }
 
       setShowModal(false);
+      setCoverUploadError(null);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Falha ao salvar loja");
@@ -528,6 +537,34 @@ export default function StoresAdminPage() {
             ) : (
               <>
                 {error && !showModal && <p className="text-sm text-red-500">{error}</p>}
+
+                {coverUploadError && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4">
+                    <div className="w-full max-w-md rounded-3xl bg-white text-slate-900 shadow-2xl p-6 space-y-4">
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <p className="text-xs uppercase tracking-[0.18em] text-red-600">Imagem</p>
+                          <h3 className="text-xl font-semibold">Erro ao enviar imagem</h3>
+                        </div>
+                        <button
+                          onClick={() => setCoverUploadError(null)}
+                          className="text-sm px-3 py-1 rounded-full bg-neutral-100 border border-neutral-200 hover:bg-neutral-200"
+                        >
+                          Fechar
+                        </button>
+                      </div>
+                      <p className="text-sm text-neutral-700">{coverUploadError}</p>
+                      <div className="flex justify-end">
+                        <button
+                          onClick={() => setCoverUploadError(null)}
+                          className="px-4 py-2 rounded-lg bg-[#6320ee] text-white text-sm font-semibold hover:brightness-95"
+                        >
+                          Entendi
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <section className="rounded-2xl bg-white border border-slate-200 p-4 flex items-center justify-between">
                   <div>

@@ -1,11 +1,14 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { adminFetch, adminUpload } from "@/lib/admin-api";
 import { useAdminGuard } from "@/lib/use-admin-guard";
 import { useTenantModules } from "@/lib/use-tenant-modules";
 import { Campaign, Category, Product } from "@/types";
 import { ProfileBadge } from "@/components/admin/ProfileBadge";
 import { AdminSidebar } from "@/components/admin/AdminSidebar";
+import { FieldTooltip } from "@/components/admin/FieldTooltip";
+import { PriceInput } from "@/components/catalog/PriceInput";
+import { BannerCropModal } from "@/components/admin/BannerCropModal";
 import { adminMenuWithHome } from "@/config/adminMenu";
 import { usePathname } from "next/navigation";
 import { useOrgName } from "@/lib/use-org-name";
@@ -29,13 +32,14 @@ type FormState = {
   ends_at: string;
   is_active: boolean;
   usage_limit: number | string;
+  apply_mode: "first" | "stack";
   store_ids: string[];
   rule_config: RuleConfig;
   banner_enabled: boolean;
   banner_position: "top" | "between";
   banner_popup: boolean;
+  banner_display_order: number;
   banner_image_url: string;
-  banner_link_url: string;
 };
 
 type RuleCondition = {
@@ -88,6 +92,7 @@ const defaultForm: FormState = {
   ends_at: "",
   is_active: true,
   usage_limit: "",
+  apply_mode: "first",
   store_ids: [],
   rule_config: {
     rules: [
@@ -103,15 +108,8 @@ const defaultForm: FormState = {
   banner_enabled: false,
   banner_position: "top",
   banner_popup: false,
+  banner_display_order: 0,
   banner_image_url: "",
-  banner_link_url: "",
-};
-
-const typeLabels: Record<Campaign["type"], string> = {
-  order_percent: "Desconto no total",
-  shipping_percent: "Desconto no frete",
-  category_percent: "Desconto por categoria",
-  rule: "Campanha por regras",
 };
 
 const conditionDimensions = [
@@ -146,14 +144,10 @@ const actionOptions = [
   { value: "brinde_produto", label: "Brinde (produto)" },
 ];
 
-const BANNER_WIDTH = 1200;
-const BANNER_HEIGHT = 400;
-const BANNER_ASPECT = BANNER_WIDTH / BANNER_HEIGHT;
-
-function fmtDate(value?: string | null) {
+function fmtDateShort(value?: string | null) {
   if (!value) return "-";
   const d = new Date(value);
-  return d.toLocaleString("pt-BR");
+  return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
 function fmtDateShort(value?: string | null) {
@@ -190,6 +184,7 @@ export default function CampaignsAdmin() {
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"active" | "all" | "inactive">("active");
+  const [filterOpen, setFilterOpen] = useState(false);
   const [form, setForm] = useState<FormState>(defaultForm);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -197,10 +192,10 @@ export default function CampaignsAdmin() {
   const [bannerPreview, setBannerPreview] = useState<string | null>(null);
   const [currentBannerUrl, setCurrentBannerUrl] = useState<string | null>(null);
   const [removeBanner, setRemoveBanner] = useState(false);
-  const [bannerPositionY, setBannerPositionY] = useState(50);
-  const [statusFilterOpen, setStatusFilterOpen] = useState(false);
-  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
-  const formRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const [showCropModal, setShowCropModal] = useState(false);
+  const [fileToCrop, setFileToCrop] = useState<File | null>(null);
+  const formRef = useRef<HTMLDivElement>(null);
+  const fieldRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   function buildRuleConfigPayload(config: RuleConfig): RuleConfig {
     return {
@@ -296,63 +291,8 @@ export default function CampaignsAdmin() {
     setBannerPreview(null);
     setCurrentBannerUrl(null);
     setRemoveBanner(false);
-    setBannerPositionY(50);
-  }
-
-  /** Gera blob da imagem recortada no formato do banner (1200×400) com object-fit: cover e position Y. */
-  function cropBannerToBlob(file: File, positionYPercent: number): Promise<Blob> {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      const url = URL.createObjectURL(file);
-      img.onload = () => {
-        try {
-          const srcW = img.naturalWidth;
-          const srcH = img.naturalHeight;
-          const destW = BANNER_WIDTH;
-          const destH = BANNER_HEIGHT;
-          const destAspect = destW / destH;
-          const srcAspect = srcW / srcH;
-          let drawW: number, drawH: number, sx: number, sy: number;
-          if (srcAspect > destAspect) {
-            drawH = srcH;
-            drawW = srcH * destAspect;
-            sx = (srcW - drawW) / 2;
-            sy = (srcH - drawH) * (positionYPercent / 100);
-          } else {
-            drawW = srcW;
-            drawH = srcW / destAspect;
-            sx = 0;
-            sy = (srcH - drawH) * (positionYPercent / 100);
-          }
-          sy = Math.max(0, Math.min(sy, srcH - drawH));
-          sx = Math.max(0, Math.min(sx, srcW - drawW));
-          const canvas = document.createElement("canvas");
-          canvas.width = destW;
-          canvas.height = destH;
-          const ctx = canvas.getContext("2d");
-          if (!ctx) {
-            URL.revokeObjectURL(url);
-            reject(new Error("Canvas not supported"));
-            return;
-          }
-          ctx.drawImage(img, sx, sy, drawW, drawH, 0, 0, destW, destH);
-          URL.revokeObjectURL(url);
-          canvas.toBlob(
-            (blob) => (blob ? resolve(blob) : reject(new Error("toBlob failed"))),
-            file.type || "image/jpeg",
-            0.92
-          );
-        } catch (e) {
-          URL.revokeObjectURL(url);
-          reject(e);
-        }
-      };
-      img.onerror = () => {
-        URL.revokeObjectURL(url);
-        reject(new Error("Failed to load image"));
-      };
-      img.src = url;
-    });
+    setShowCropModal(false);
+    setFileToCrop(null);
   }
 
   async function load() {
@@ -406,11 +346,38 @@ export default function CampaignsAdmin() {
     try {
       setSaving(true);
       setError(null);
+
+      const errors: string[] = [];
+      if (!form.name.trim()) errors.push("name");
+      if (form.type === "category_percent" && !form.category_id) errors.push("category_id");
+      if (form.type !== "rule" && (form.value_percent === "" || Number(form.value_percent) < 0 || Number(form.value_percent) > 100)) {
+        errors.push("value_percent");
+      }
+      if (form.banner_enabled && !removeBanner && !currentBannerUrl && !bannerFile) errors.push("banner");
+
+      if (errors.length > 0) {
+        const first = errors[0];
+        const el = fieldRefs.current[first] ?? formRef.current;
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+        setError(
+          first === "name"
+            ? "Preencha o nome da campanha."
+            : first === "category_id"
+              ? "Selecione a categoria para desconto por categoria."
+              : first === "value_percent"
+                ? "Informe o valor percentual entre 0 e 100."
+                : "Adicione uma imagem para ativar o banner."
+        );
+        setSaving(false);
+        return;
+      }
+
       const wantsFileUpload = !!bannerFile;
       const bannerEnabledRequested = form.banner_enabled && !removeBanner;
       const hasStoredBanner = Boolean(currentBannerUrl);
       const bannerEnabledForPayload = bannerEnabledRequested && (!wantsFileUpload || hasStoredBanner);
-      const bannerLinkUrl = form.banner_link_url.trim() || null;
       if (bannerEnabledRequested && !hasStoredBanner && !wantsFileUpload) {
         setError("Adicione uma imagem para ativar o banner.");
         return;
@@ -420,15 +387,16 @@ export default function CampaignsAdmin() {
         name: form.name.trim(),
         type: form.type,
         value_percent: form.type === "rule" ? 0 : Number(form.value_percent),
-        coupon_code: null,
         category_id: form.type === "category_percent" ? form.category_id || null : null,
-        min_order_cents: form.min_order_cents === "" ? null : Number(form.min_order_cents),
+        min_order_cents:
+          form.min_order_cents === "" || form.min_order_cents === undefined
+            ? null
+            : Number(form.min_order_cents),
         starts_at: form.starts_at ? new Date(form.starts_at).toISOString() : null,
         ends_at: form.ends_at ? new Date(form.ends_at).toISOString() : null,
         is_active: form.is_active,
         usage_limit: form.usage_limit === "" ? null : Number(form.usage_limit),
-        apply_mode: "first",
-        priority: 0,
+        apply_mode: form.apply_mode,
         store_ids: form.store_ids,
         rule_config:
           form.type === "rule"
@@ -437,7 +405,7 @@ export default function CampaignsAdmin() {
         banner_enabled: bannerEnabledForPayload,
         banner_position: bannerEnabledForPayload ? form.banner_position : null,
         banner_popup: bannerEnabledForPayload ? form.banner_popup : false,
-        banner_link_url: bannerLinkUrl,
+        banner_display_order: form.banner_display_order,
       };
       if (removeBanner) {
         payload.banner_enabled = false;
@@ -470,7 +438,6 @@ export default function CampaignsAdmin() {
               banner_enabled: true,
               banner_position: form.banner_position,
               banner_popup: form.banner_popup,
-              banner_link_url: bannerLinkUrl,
             }),
           });
         }
@@ -497,18 +464,19 @@ export default function CampaignsAdmin() {
       type: c.type,
       value_percent: c.value_percent,
       category_id: c.category_id || "",
-      min_order_cents: c.min_order_cents ?? "",
+      min_order_cents: c.min_order_cents ?? 0,
       starts_at: c.starts_at ? new Date(c.starts_at).toISOString().slice(0, 16) : "",
       ends_at: c.ends_at ? new Date(c.ends_at).toISOString().slice(0, 16) : "",
       is_active: c.is_active,
       usage_limit: c.usage_limit ?? "",
+      apply_mode: (c.apply_mode as FormState["apply_mode"]) || "first",
       store_ids: c.store_ids ?? [],
       rule_config: normalizeRuleConfigFromApi(c.rule_config as RuleConfig),
       banner_enabled: c.banner_enabled ?? false,
       banner_position: c.banner_position === "between" ? "between" : "top",
       banner_popup: c.banner_popup ?? false,
+      banner_display_order: c.banner_display_order ?? 0,
       banner_image_url: c.banner_image_url || "",
-      banner_link_url: c.banner_link_url || "",
     });
     setCurrentBannerUrl(c.banner_image_url || null);
     setBannerPreview(c.banner_image_url || null);
@@ -583,64 +551,47 @@ export default function CampaignsAdmin() {
                   <h2 className="text-lg font-semibold text-slate-900">Gerencie campanhas</h2>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto sm:justify-end">
-                  <input
-                    className="input w-full sm:w-48"
-                    placeholder="Buscar campanha"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                  />
-                  <div className="relative flex items-center gap-2">
+                  <div className="relative flex-1 sm:flex-initial flex items-center gap-2">
+                    {filterOpen && (
+                      <div className="absolute right-0 top-full mt-1 z-10 rounded-xl border border-slate-200 bg-white p-3 shadow-lg min-w-[200px] space-y-2">
+                        <select
+                          className="input w-full"
+                          value={statusFilter}
+                          onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
+                        >
+                          <option value="active">Somente ativas</option>
+                          <option value="all">Todas</option>
+                          <option value="inactive">Somente inativas</option>
+                        </select>
+                        <input
+                          className="input w-full"
+                          placeholder="Buscar campanha"
+                          value={search}
+                          onChange={(e) => setSearch(e.target.value)}
+                        />
+                        <button
+                          onClick={() => {
+                            load();
+                            setFilterOpen(false);
+                          }}
+                          className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm bg-slate-100 hover:bg-white/20"
+                          disabled={loading}
+                        >
+                          {loading ? "Carregando..." : "Buscar"}
+                        </button>
+                      </div>
+                    )}
                     <button
                       type="button"
-                      onClick={() => setStatusFilterOpen((o) => !o)}
-                      className="p-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors"
-                      title="Filtrar por status"
-                      aria-expanded={statusFilterOpen}
+                      onClick={() => setFilterOpen((o) => !o)}
+                      className="p-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100"
+                      aria-label="Filtros"
                     >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
                       </svg>
                     </button>
-                    {statusFilterOpen && (
-                      <>
-                        <div
-                          className="fixed inset-0 z-10"
-                          aria-hidden
-                          onClick={() => setStatusFilterOpen(false)}
-                        />
-                        <div className="absolute right-0 top-full mt-1 z-20 min-w-[180px] rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
-                          <button
-                            type="button"
-                            onClick={() => { setStatusFilter("active"); setStatusFilterOpen(false); }}
-                            className={`w-full text-left px-3 py-2 text-sm ${statusFilter === "active" ? "bg-[#6320ee]/10 text-[#6320ee] font-medium" : "text-slate-700 hover:bg-slate-50"}`}
-                          >
-                            Somente ativas
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => { setStatusFilter("all"); setStatusFilterOpen(false); }}
-                            className={`w-full text-left px-3 py-2 text-sm ${statusFilter === "all" ? "bg-[#6320ee]/10 text-[#6320ee] font-medium" : "text-slate-700 hover:bg-slate-50"}`}
-                          >
-                            Todas
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => { setStatusFilter("inactive"); setStatusFilterOpen(false); }}
-                            className={`w-full text-left px-3 py-2 text-sm ${statusFilter === "inactive" ? "bg-[#6320ee]/10 text-[#6320ee] font-medium" : "text-slate-700 hover:bg-slate-50"}`}
-                          >
-                            Somente inativas
-                          </button>
-                        </div>
-                      </>
-                    )}
                   </div>
-                  <button
-                    onClick={load}
-                    className="px-3 py-2 rounded-lg border border-slate-200 text-sm bg-slate-100 hover:bg-white/20"
-                    disabled={loading}
-                  >
-                    {loading ? "Carregando..." : "Buscar"}
-                  </button>
                   <button
                     onClick={() => {
                       setShowForm(true);
@@ -717,12 +668,12 @@ export default function CampaignsAdmin() {
                   </div>
                   <div className="hidden sm:block">
                     <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-slate-50">
-                      <table className="w-full text-xs sm:text-sm min-w-[500px]">
+                      <table className="w-full text-xs sm:text-sm min-w-[400px]">
                         <thead className="bg-slate-100 text-left text-slate-700">
                           <tr>
                             <th className="px-3 sm:px-4 py-2">Nome</th>
                             <th className="px-3 sm:px-4 py-2">Vigência</th>
-                            <th className="px-3 sm:px-4 py-2">Aplicada</th>
+                            <th className="px-3 sm:px-4 py-2">Vezes aplicada</th>
                             <th className="px-3 sm:px-4 py-2 text-right">Ações</th>
                           </tr>
                         </thead>
@@ -743,12 +694,10 @@ export default function CampaignsAdmin() {
                                   </span>
                                 </div>
                               </td>
-                              <td className="px-3 sm:px-4 py-2 text-slate-600">
+                              <td className="px-3 sm:px-4 py-2">
                                 {fmtDateShort(c.starts_at)} a {fmtDateShort(c.ends_at)}
                               </td>
-                              <td className="px-3 sm:px-4 py-2 text-slate-600">
-                                {c.usage_count} vez(es)
-                              </td>
+                              <td className="px-3 sm:px-4 py-2">{c.usage_count}</td>
                               <td className="px-3 sm:px-4 py-2 text-right space-x-2">
                                 <button
                                   onClick={() => onEdit(c)}
@@ -807,18 +756,24 @@ export default function CampaignsAdmin() {
 
             {error && <p className="text-sm text-red-600">{error}</p>}
 
-            <div className="grid md:grid-cols-2 gap-3 text-sm">
-              <div ref={(r) => { formRefs.current.name = r; }} className="space-y-1">
-                <RequiredLabel>Nome</RequiredLabel>
+            <div ref={formRef} className="grid md:grid-cols-2 gap-3 text-sm">
+              <div ref={(el) => { fieldRefs.current.name = el; }} className="space-y-1">
+                <span className="inline-flex items-center gap-1">
+                  Nome <span className="text-red-500">*</span>
+                  <FieldTooltip text="Nome identificador da campanha (ex.: Black Friday)." />
+                </span>
                 <input
                   className={`input w-full ${fieldErrors.name ? "border-red-400 ring-1 ring-red-200" : ""}`}
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  aria-required
                 />
-                {fieldErrors.name && <p className="text-xs text-red-600">{fieldErrors.name}</p>}
               </div>
               <div className="space-y-1">
-                <RequiredLabel>Tipo</RequiredLabel>
+                <span className="inline-flex items-center gap-1">
+                  Tipo <span className="text-red-500">*</span>
+                  <FieldTooltip text="Tipo de desconto: no total do pedido, no frete, por categoria ou por regras." />
+                </span>
                 <select
                   className={`input w-full ${fieldErrors.type ? "border-red-400 ring-1 ring-red-200" : ""}`}
                   value={form.type}
@@ -831,8 +786,11 @@ export default function CampaignsAdmin() {
                 </select>
               </div>
               {form.type !== "rule" && (
-                <label className="space-y-1">
-                  <span className="text-sm font-medium text-slate-800">Valor (%)</span>
+                <div ref={(el) => { fieldRefs.current.value_percent = el; }} className="space-y-1">
+                  <span className="inline-flex items-center gap-1">
+                    Valor (%) <span className="text-red-500">*</span>
+                    <FieldTooltip text="Percentual de desconto entre 0 e 100." />
+                  </span>
                   <input
                     className="input w-full"
                     type="number"
@@ -841,12 +799,15 @@ export default function CampaignsAdmin() {
                     value={form.value_percent}
                     onChange={(e) => setForm({ ...form, value_percent: Number(e.target.value) })}
                   />
-                </label>
+                </div>
               )}
 
               {form.type === "category_percent" && (
-                <div ref={(r) => { formRefs.current.category_id = r; }} className="space-y-1">
-                  <RequiredLabel>Categoria</RequiredLabel>
+                <div ref={(el) => { fieldRefs.current.category_id = el; }} className="space-y-1">
+                  <span className="inline-flex items-center gap-1">
+                    Categoria <span className="text-red-500">*</span>
+                    <FieldTooltip text="Categoria que receberá o desconto percentual." />
+                  </span>
                   <select
                     className={`input w-full ${fieldErrors.category_id ? "border-red-400 ring-1 ring-red-200" : ""}`}
                     value={form.category_id}
@@ -859,24 +820,25 @@ export default function CampaignsAdmin() {
                       </option>
                     ))}
                   </select>
-                  {fieldErrors.category_id && <p className="text-xs text-red-600">{fieldErrors.category_id}</p>}
                 </div>
               )}
 
-              <div ref={(r) => { formRefs.current.min_order_cents = r; }} className="space-y-1">
-                <span className="text-sm font-medium text-slate-800">Pedido mínimo (R$)</span>
-                <input
+              <div className="space-y-1">
+                <span className="inline-flex items-center gap-1">
+                  Pedido mínimo (R$)
+                  <FieldTooltip text="Valor mínimo do pedido em reais para a campanha ser aplicada. Deixe em zero para não exigir mínimo." />
+                </span>
+                <PriceInput
+                  valueCents={typeof form.min_order_cents === "number" ? form.min_order_cents : (Number(form.min_order_cents) || 0)}
+                  onChange={(cents) => setForm({ ...form, min_order_cents: cents })}
                   className="input w-full"
-                  type="text"
-                  inputMode="decimal"
-                  value={form.min_order_cents === "" ? "" : formatMinOrderDisplay(form.min_order_cents)}
-                  onChange={handleMinOrderChange}
-                  placeholder="R$ 0,00"
                 />
-                <span className="text-xs text-slate-500">Opcional. Use vírgula para centavos.</span>
               </div>
-              <label className="space-y-1">
-                <span className="text-sm font-medium text-slate-800">Limite de uso</span>
+              <div className="space-y-1">
+                <span className="inline-flex items-center gap-1">
+                  Limite de uso
+                  <FieldTooltip text="Número máximo de vezes que a campanha pode ser aplicada. Deixe vazio para ilimitado." />
+                </span>
                 <input
                   className="input w-full"
                   type="number"
@@ -887,25 +849,45 @@ export default function CampaignsAdmin() {
                   }
                   placeholder="Opcional"
                 />
-              </label>
-              <label className="space-y-1">
-                <span className="text-sm font-medium text-slate-800">Início</span>
+              </div>
+              <div className="space-y-1">
+                <span className="inline-flex items-center gap-1">
+                  Aplicação
+                  <FieldTooltip text="Parar ao aplicar: só uma campanha por pedido. Acumular: permite somar mais de uma campanha." />
+                </span>
+                <select
+                  className="input w-full"
+                  value={form.apply_mode}
+                  onChange={(e) => setForm({ ...form, apply_mode: e.target.value as FormState["apply_mode"] })}
+                >
+                  <option value="first">Parar ao aplicar</option>
+                  <option value="stack">Acumular campanhas</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <span className="inline-flex items-center gap-1">
+                  Início
+                  <FieldTooltip text="Data e hora em que a campanha passa a valer." />
+                </span>
                 <input
                   className="input w-full"
                   type="datetime-local"
                   value={form.starts_at}
                   onChange={(e) => setForm({ ...form, starts_at: e.target.value })}
                 />
-              </label>
-              <label className="space-y-1">
-                <span className="text-sm font-medium text-slate-800">Fim</span>
+              </div>
+              <div className="space-y-1">
+                <span className="inline-flex items-center gap-1">
+                  Fim
+                  <FieldTooltip text="Data e hora em que a campanha deixa de valer." />
+                </span>
                 <input
                   className="input w-full"
                   type="datetime-local"
                   value={form.ends_at}
                   onChange={(e) => setForm({ ...form, ends_at: e.target.value })}
                 />
-              </label>
+              </div>
 
               <label className="flex items-center gap-2">
                 <input
@@ -913,7 +895,10 @@ export default function CampaignsAdmin() {
                   checked={form.is_active}
                   onChange={(e) => setForm({ ...form, is_active: e.target.checked })}
                 />
-                <span>Ativa</span>
+                <span className="inline-flex items-center gap-1">
+                  Ativa
+                  <FieldTooltip text="Campanhas inativas não são aplicadas no checkout." />
+                </span>
               </label>
             </div>
 
@@ -1292,7 +1277,7 @@ export default function CampaignsAdmin() {
               </div>
             )}
 
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 space-y-3">
+            <div ref={(el) => { fieldRefs.current.banner = el; }} className="rounded-2xl border border-slate-200 bg-slate-50 p-3 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Banner</p>
@@ -1317,7 +1302,10 @@ export default function CampaignsAdmin() {
               {form.banner_enabled && (
                 <div className="grid md:grid-cols-2 gap-3 text-sm">
                   <label className="space-y-1 md:col-span-2">
-                    <span>Imagem do banner</span>
+                    <span className="inline-flex items-center gap-2 flex-wrap">
+                      Imagem do banner
+                      <span className="text-xs font-normal text-slate-500">(1200 × 400 px)</span>
+                    </span>
                     <input
                       type="file"
                       accept="image/jpeg,image/png,image/webp"
@@ -1327,17 +1315,34 @@ export default function CampaignsAdmin() {
                         if (bannerPreview?.startsWith("blob:")) {
                           URL.revokeObjectURL(bannerPreview);
                         }
-                        setBannerFile(file);
-                        setRemoveBanner(false);
                         if (file) {
-                          setBannerPreview(URL.createObjectURL(file));
-                          setForm({ ...form, banner_enabled: true });
+                          setFileToCrop(file);
+                          setShowCropModal(true);
+                          setRemoveBanner(false);
                         } else {
+                          setBannerFile(null);
                           setBannerPreview(currentBannerUrl);
                         }
                       }}
                     />
+                    <span className="text-xs text-slate-500">JPG, PNG ou WebP até 5MB. Após selecionar, ajuste o enquadramento às dimensões da plataforma.</span>
                   </label>
+                  {showCropModal && fileToCrop && (
+                    <BannerCropModal
+                      file={fileToCrop}
+                      onConfirm={(croppedFile) => {
+                        setBannerFile(croppedFile);
+                        setBannerPreview(URL.createObjectURL(croppedFile));
+                        setForm((f) => ({ ...f, banner_enabled: true }));
+                        setFileToCrop(null);
+                        setShowCropModal(false);
+                      }}
+                      onCancel={() => {
+                        setFileToCrop(null);
+                        setShowCropModal(false);
+                      }}
+                    />
+                  )}
                   {bannerPreview && (
                     <div className="md:col-span-2 space-y-2">
                       <p className="text-xs font-medium text-slate-600">Pré-visualização (ajuste a posição antes de salvar)</p>
@@ -1383,15 +1388,6 @@ export default function CampaignsAdmin() {
                       </button>
                     </div>
                   )}
-                  <label className="space-y-1 md:col-span-2">
-                    <span>Link (URL)</span>
-                    <input
-                      className="input w-full"
-                      value={form.banner_link_url}
-                      onChange={(e) => setForm({ ...form, banner_link_url: e.target.value })}
-                      placeholder="https://..."
-                    />
-                  </label>
                   <label className="space-y-1">
                     <span>Posicao</span>
                     <select
@@ -1412,6 +1408,24 @@ export default function CampaignsAdmin() {
                       onChange={(e) => setForm({ ...form, banner_popup: e.target.checked })}
                     />
                     <span>Popup na primeira visita</span>
+                  </label>
+                  <label className="space-y-1">
+                    <span className="inline-flex items-center gap-1">
+                      Ordem de exibição
+                      <FieldTooltip text="Número que define a ordem dos banners (menor aparece primeiro). Usado no carrossel e na fila de popups." />
+                    </span>
+                    <input
+                      className="input w-full"
+                      type="number"
+                      min={0}
+                      value={form.banner_display_order}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          banner_display_order: Math.max(0, Number(e.target.value) || 0),
+                        })
+                      }
+                    />
                   </label>
                 </div>
               )}

@@ -24,8 +24,7 @@ Todo conteudo foi escrito para permitir continuidade por qualquer IA ou pessoa s
 - `development-standards.md`: padroes obrigatorios de implementacao.
 - `security.md`: controles atuais, riscos e backlog de hardening.
 - `performance.md`: gargalos, metricas alvo e plano de melhoria.
-- `ARCHITECTURAL_GAPS_REPORT.md`: relatorio de gaps arquiteturais (revisao 2026) e como o `.cursorrules` mitiga os riscos.
-- `visual-identity.md`: diretrizes de design system, cores hexadecimais e tipografia da Rokin para uso da IA.
+- `FLUXO-SISTEMA-EXCALIDRAW.md` + `fluxo-sistema-roksell.excalidraw`: diagrama do fluxo completo (topologia, seguranca, requisicoes, comunicacao back-front).
 
 ## 3. Setup Rapido (Local)
 

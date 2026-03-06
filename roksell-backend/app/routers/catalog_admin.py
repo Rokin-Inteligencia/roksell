@@ -121,6 +121,27 @@ def update_additional(
     return catalog_admin_svc.update_additional(
         db=db, tenant_id=tenant.id, user=user, additional_id=additional_id, payload=payload
     )
+    if duplicate:
+        raise HTTPException(status_code=400, detail="Additional already exists")
+
+    additional.store_id = target_store_id
+    additional.name = next_name
+    if "description" in payload.model_fields_set:
+        additional.description = payload.description
+    if payload.price_cents is not None:
+        additional.price_cents = payload.price_cents
+    if payload.is_active is not None:
+        additional.is_active = payload.is_active
+    if payload.display_order is not None:
+        additional.display_order = payload.display_order
+    if "image_url" in payload.model_fields_set:
+        if payload.image_url is None and additional.image_url:
+            storage_delete_by_url(additional.image_url)
+        additional.image_url = payload.image_url
+
+    db.commit()
+    db.refresh(additional)
+    return additional
 
 
 @router.delete("/additionals/{additional_id}", status_code=204)
@@ -130,7 +151,88 @@ def delete_additional(
     tenant: TenantContext = Depends(require_module_action("products", "edit")),
     user: models.User = Depends(require_roles(models.UserRole.owner, models.UserRole.manager, models.UserRole.operator)),
 ):
-    catalog_admin_svc.delete_additional(db=db, tenant_id=tenant.id, user=user, additional_id=additional_id)
+    allowed_store_ids = _load_accessible_store_ids(db, tenant.id, user)
+    additional = (
+        db.query(models.Additional)
+        .filter(
+            models.Additional.id == additional_id,
+            models.Additional.tenant_id == tenant.id,
+            _with_global_store_scope(models.Additional.store_id, allowed_store_ids),
+        )
+        .first()
+    )
+    if not additional:
+        raise HTTPException(status_code=404, detail="Additional not found")
+
+    if _has_sales_using_additional(db, tenant.id, additional.name):
+        raise HTTPException(
+            status_code=400,
+            detail="Nao foi possivel excluir o adicional: ele ja possui historico de vendas.",
+        )
+
+    storage_delete_by_url(additional.image_url)
+    db.delete(additional)
+    db.commit()
+
+
+@router.post("/additionals/{additional_id}/image", response_model=schemas.AdditionalOut)
+def upload_additional_image(
+    additional_id: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(require_module_action("products", "edit")),
+    user: models.User = Depends(require_roles(models.UserRole.owner, models.UserRole.manager, models.UserRole.operator)),
+):
+    allowed_store_ids = _load_accessible_store_ids(db, tenant.id, user)
+    additional = (
+        db.query(models.Additional)
+        .filter(
+            models.Additional.id == additional_id,
+            models.Additional.tenant_id == tenant.id,
+            _with_global_store_scope(models.Additional.store_id, allowed_store_ids),
+        )
+        .first()
+    )
+    if not additional:
+        raise HTTPException(status_code=404, detail="Additional not found")
+    file_name = (file.filename or "").lower()
+    expected_ext = ALLOWED_IMAGE_TYPES.get(file.content_type or "")
+    if not expected_ext:
+        if file_name.endswith(".jpg") or file_name.endswith(".jpeg"):
+            expected_ext = "jpg"
+        elif file_name.endswith(".png"):
+            expected_ext = "png"
+        elif file_name.endswith(".webp"):
+            expected_ext = "webp"
+    if not expected_ext:
+        raise HTTPException(status_code=400, detail="Unsupported image type")
+
+    contents = file.file.read(MAX_IMAGE_BYTES + 1)
+    if not contents:
+        raise HTTPException(status_code=400, detail="Empty image file")
+    if len(contents) > MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=400, detail="Image too large (max 5MB)")
+
+    detected_ext = None
+    if contents.startswith(PNG_SIGNATURE):
+        detected_ext = "png"
+    elif contents.startswith(JPEG_SIGNATURE):
+        detected_ext = "jpg"
+    elif contents.startswith(RIFF_SIGNATURE) and contents[8:12] == WEBP_SIGNATURE:
+        detected_ext = "webp"
+    if detected_ext != expected_ext:
+        raise HTTPException(status_code=400, detail="Invalid image file")
+
+    ext = detected_ext
+    filename = f"{uuid.uuid4()}.{ext}"
+    store_segment = _resolve_store_media_segment(db, tenant.id, additional.store_id)
+    key = build_media_key("tenants", tenant.slug, "stores", store_segment, "additionals", additional.id, filename)
+
+    storage_delete_by_url(additional.image_url)
+    additional.image_url = storage_save(key, contents, file.content_type)
+    db.commit()
+    db.refresh(additional)
+    return additional
 
 
 @router.post("/products", response_model=schemas.ProductOut, status_code=201)
@@ -140,7 +242,59 @@ def create_product(
     tenant: TenantContext = Depends(require_module_action("products", "edit")),
     user: models.User = Depends(require_roles(models.UserRole.owner, models.UserRole.manager, models.UserRole.operator)),
 ):
-    return catalog_admin_svc.create_product(db=db, tenant_id=tenant.id, user=user, payload=payload)
+    target_store_id = _resolve_store_id_for_write(db, tenant.id, user, payload.store_id)
+    _ensure_store_exists(db, tenant.id, target_store_id)
+
+    if payload.category_id:
+        _ensure_category_in_store(db, tenant.id, payload.category_id, target_store_id)
+
+    if not payload.is_custom:
+        if not payload.name or payload.price_cents is None:
+            raise HTTPException(status_code=400, detail="Name and price are required")
+    name = payload.name or "Produto customizado"
+    price_cents = payload.price_cents if payload.price_cents is not None else 0
+    try:
+        availability_status = resolve_availability_status(payload.availability_status, payload.block_sale)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid availability_status")
+
+    if payload.product_master_id:
+        master = _load_product_master_or_400(db, tenant.id, payload.product_master_id)
+    else:
+        master = _create_local_product_master(db, tenant.id, name)
+
+    product = models.Product(
+        id=str(uuid.uuid4()),
+        tenant_id=tenant.id,
+        product_master_id=master.id,
+        store_id=target_store_id,
+        category_id=payload.category_id,
+        name=name,
+        description=payload.description,
+        price_cents=price_cents,
+        is_active=payload.is_active,
+        is_custom=payload.is_custom,
+        additionals_enabled=payload.additionals_enabled,
+        block_sale=block_sale_from_status(availability_status),
+        availability_status=availability_status,
+        image_url=payload.image_url,
+        image_urls=payload.image_urls,
+        video_url=payload.video_url,
+        video_position=(payload.video_position or "end")[:10],
+        display_order=payload.display_order,
+        tags=payload.tags,
+    )
+    db.add(product)
+    _sync_product_additionals(
+        db=db,
+        tenant_id=tenant.id,
+        product=product,
+        target_store_id=target_store_id,
+        requested_additional_ids=payload.additional_ids,
+    )
+    db.commit()
+    db.refresh(product)
+    return product
 
 
 @router.patch("/products/{product_id}", response_model=schemas.ProductOut)
@@ -154,6 +308,108 @@ def update_product(
     return catalog_admin_svc.update_product(
         db=db, tenant_id=tenant.id, user=user, product_id=product_id, payload=payload
     )
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    target_store_id = product.store_id
+    if payload.store_id is not None:
+        target_store_id = _resolve_store_id_for_write(db, tenant.id, user, payload.store_id)
+        if payload.category_id is None and product.category_id:
+            same_store_category = (
+                db.query(models.Category.id)
+                .filter(
+                    models.Category.id == product.category_id,
+                    models.Category.tenant_id == tenant.id,
+                    models.Category.store_id == target_store_id,
+                )
+                .first()
+            )
+            if same_store_category is None:
+                product.category_id = None
+        if "additional_ids" not in payload.model_fields_set:
+            _drop_invalid_product_additionals_for_store(
+                db=db,
+                tenant_id=tenant.id,
+                product=product,
+                target_store_id=target_store_id,
+            )
+
+    if payload.category_id is not None:
+        _ensure_category_in_store(db, tenant.id, payload.category_id, target_store_id)
+
+    if payload.name is not None:
+        product.name = payload.name
+    if payload.description is not None:
+        product.description = payload.description
+    if payload.price_cents is not None:
+        product.price_cents = payload.price_cents
+    if payload.is_active is not None:
+        product.is_active = payload.is_active
+    if payload.is_custom is not None:
+        product.is_custom = payload.is_custom
+    if payload.additionals_enabled is not None:
+        product.additionals_enabled = payload.additionals_enabled
+    if payload.availability_status is not None or payload.block_sale is not None:
+        try:
+            if payload.availability_status is not None:
+                availability_status = normalize_availability_status(payload.availability_status)
+            else:
+                availability_status = resolve_availability_status(None, payload.block_sale)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid availability_status")
+        if availability_status is None:
+            availability_status = "available"
+        product.availability_status = availability_status
+        product.block_sale = block_sale_from_status(availability_status)
+    if "image_url" in payload.model_fields_set:
+        if payload.image_url is None and product.image_url:
+            storage_delete_by_url(product.image_url)
+        product.image_url = payload.image_url
+    if "image_urls" in payload.model_fields_set:
+        old_urls = product.image_urls or []
+        new_urls = payload.image_urls or []
+        for u in old_urls:
+            if u and u not in new_urls:
+                storage_delete_by_url(u)
+        product.image_urls = new_urls[:5]  # max 5
+        product.image_url = new_urls[0] if new_urls else None
+    if "video_url" in payload.model_fields_set:
+        if payload.video_url is None and product.video_url:
+            storage_delete_by_url(product.video_url)
+        product.video_url = payload.video_url
+    if payload.video_position is not None:
+        product.video_position = payload.video_position[:10]
+    if payload.category_id is not None:
+        product.category_id = payload.category_id
+    if payload.display_order is not None:
+        product.display_order = payload.display_order
+    if payload.tags is not None:
+        product.tags = payload.tags
+    if "product_master_id" in payload.model_fields_set:
+        if not payload.product_master_id:
+            raise HTTPException(status_code=400, detail="product_master_id is required")
+        master = _load_product_master_or_400(db, tenant.id, payload.product_master_id)
+        product.product_master_id = master.id
+    elif not product.product_master_id:
+        # Keep backward compatibility for rows created before product masters existed.
+        master = _create_local_product_master(db, tenant.id, product.name)
+        product.product_master_id = master.id
+    if "additional_ids" in payload.model_fields_set:
+        if not target_store_id:
+            raise HTTPException(status_code=400, detail="store_id is required to configure additionals")
+        _sync_product_additionals(
+            db=db,
+            tenant_id=tenant.id,
+            product=product,
+            target_store_id=target_store_id,
+            requested_additional_ids=payload.additional_ids or [],
+        )
+
+    product.store_id = target_store_id
+
+    db.commit()
+    db.refresh(product)
+    return product
 
 
 def _validate_image_upload(file: UploadFile, contents: bytes) -> str:
@@ -181,7 +437,22 @@ def _validate_image_upload(file: UploadFile, contents: bytes) -> str:
         detected_ext = "webp"
     if detected_ext != expected_ext:
         raise HTTPException(status_code=400, detail="Invalid image file")
-    return detected_ext
+
+    ext = detected_ext
+    filename = f"{uuid.uuid4()}.{ext}"
+    store_segment = _resolve_store_media_segment(db, tenant.id, product.store_id)
+    key = build_media_key("tenants", tenant.slug, "stores", store_segment, "products", product.id, filename)
+
+    current_urls = list(product.image_urls or ([product.image_url] if product.image_url else []))
+    if len(current_urls) >= 5:
+        raise HTTPException(status_code=400, detail="Maximum 5 images per product")
+    new_url = storage_save(key, contents, file.content_type)
+    current_urls.append(new_url)
+    product.image_urls = current_urls
+    product.image_url = current_urls[0]
+    db.commit()
+    db.refresh(product)
+    return product
 
 
 def _validate_video_upload(file: UploadFile, contents: bytes) -> str:
@@ -257,7 +528,29 @@ def delete_product(
     tenant: TenantContext = Depends(require_module_action("products", "edit")),
     user: models.User = Depends(require_roles(models.UserRole.owner, models.UserRole.manager, models.UserRole.operator)),
 ):
-    catalog_admin_svc.delete_product(db=db, tenant_id=tenant.id, user=user, product_id=product_id)
+    allowed_store_ids = _load_accessible_store_ids(db, tenant.id, user)
+    product = (
+        db.query(models.Product)
+        .filter(
+            models.Product.id == product_id,
+            models.Product.tenant_id == tenant.id,
+            _with_global_store_scope(models.Product.store_id, allowed_store_ids),
+        )
+        .first()
+    )
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if _has_non_canceled_sales_for_products(db, tenant.id, [product.id]):
+        raise HTTPException(
+            status_code=400,
+            detail="Nao foi possivel excluir o produto: existem vendas vinculadas a este registro.",
+        )
+    for url in product.image_urls or []:
+        storage_delete_by_url(url)
+    storage_delete_by_url(product.image_url)
+    storage_delete_by_url(product.video_url)
+    db.delete(product)
+    db.commit()
 
 
 @router.get("", response_model=schemas.CatalogOut)
