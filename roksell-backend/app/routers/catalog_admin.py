@@ -900,7 +900,7 @@ def upload_product_image(
     store_segment = _resolve_store_media_segment(db, tenant.id, product.store_id)
     key = build_media_key("tenants", tenant.slug, "stores", store_segment, "products", product.id, filename)
 
-    current_urls = product.image_urls or ([product.image_url] if product.image_url else [])
+    current_urls = list(product.image_urls or ([product.image_url] if product.image_url else []))
     if len(current_urls) >= 5:
         raise HTTPException(status_code=400, detail="Maximum 5 images per product")
     new_url = storage_save(key, contents, file.content_type)

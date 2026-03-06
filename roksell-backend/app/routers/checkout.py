@@ -662,7 +662,7 @@ def _load_campaigns_for_checkout(
         query = query.filter(models.Campaign.coupon_code.ilike(coupon_code.strip()))
     else:
         query = query.filter(or_(models.Campaign.coupon_code.is_(None), models.Campaign.coupon_code == ""))
-    return query.order_by(models.Campaign.priority.asc(), models.Campaign.created_at.desc()).all()
+    return query.order_by(models.Campaign.created_at.desc()).all()
 
 
 def _custom_item_price(item: schemas.ItemIn) -> int:

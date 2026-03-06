@@ -431,7 +431,8 @@ export default function CatalogAdmin() {
           productId = created.id;
         }
         if (productId) {
-          for (const file of productNewImageFiles) {
+          const filesToUpload = [...productNewImageFiles];
+          for (const file of filesToUpload) {
             const form = new FormData();
             form.append("file", file);
             await adminUpload(`/admin/catalog/products/${productId}/image`, form);
@@ -1422,14 +1423,14 @@ export default function CatalogAdmin() {
                           <span>Fotos do produto (carrossel) <span className="text-slate-400 text-xs">(opcional, até 5)</span></span>
                           <div className="flex flex-wrap gap-2 items-start">
                             {productImageUrls.map((url, idx) => (
-                              <div key={url} className="relative">
+                              <div key={`existing-${idx}-${url.slice(-40)}`} className="relative">
                                 <div className="h-20 w-20 rounded-xl overflow-hidden border border-neutral-200 bg-neutral-100">
                                   {/* eslint-disable-next-line @next/next/no-img-element */}
                                   <img src={url} alt={`Foto ${idx + 1}`} className="h-full w-full object-cover" />
                                 </div>
                                 <button
                                   type="button"
-                                  onClick={() => setProductImageUrls((prev) => prev.filter((_, i) => i !== idx))}
+                                  onClick={() => setProductImageUrls((prev) => prev.filter((u) => u !== url))}
                                   className="absolute -top-1 -right-1 h-6 w-6 rounded-full bg-red-500 text-white text-xs flex items-center justify-center hover:bg-red-600"
                                   aria-label="Remover foto"
                                 >
@@ -1462,13 +1463,20 @@ export default function CatalogAdmin() {
                                 <input
                                   type="file"
                                   accept="image/jpeg,image/png,image/webp"
+                                  multiple
                                   className="sr-only"
                                   onChange={(e) => {
-                                    const file = e.target.files?.[0];
-                                    if (file && productImageUrls.length + productNewImageFiles.length < 5) {
-                                      setProductNewImageFiles((prev) => [...prev, file]);
-                                      setProductNewImagePreviews((prev) => [...prev, URL.createObjectURL(file)]);
-                                    }
+                                    const files = Array.from(e.target.files || []);
+                                    if (!files.length) return;
+                                    const currentTotal = productImageUrls.length + productNewImageFiles.length;
+                                    const spaceLeft = Math.max(0, 5 - currentTotal);
+                                    const toAdd = files.slice(0, spaceLeft);
+                                    if (toAdd.length === 0) return;
+                                    setProductNewImageFiles((prev) => [...prev, ...toAdd]);
+                                    setProductNewImagePreviews((prev) => [
+                                      ...prev,
+                                      ...toAdd.map((f) => URL.createObjectURL(f)),
+                                    ]);
                                     e.target.value = "";
                                   }}
                                 />

@@ -8,6 +8,7 @@ import CartIcon from "../../CartIcon";
 import UserLoginButton from "@/components/UserLoginButton";
 import VitrineAdminShortcut from "@/components/VitrineAdminShortcut";
 import { CampaignBannerPopup } from "./CampaignBannerPopup";
+import { BannerCarousel } from "./BannerCarousel";
 import { OperatingHoursBadge } from "./OperatingHoursBadge";
 import type { CSSProperties } from "react";
 
@@ -292,11 +293,7 @@ export default async function VitrinePage({ params, searchParams }: PageProps) {
 
             {topBanners.length > 0 && (
               <section className="space-y-3">
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
-                  {topBanners.map((banner) => (
-                    <BannerCard key={banner.id} banner={banner} variant="top" />
-                  ))}
-                </div>
+                <BannerCarousel banners={topBanners} variant="top" />
               </section>
             )}
 
@@ -348,15 +345,15 @@ export default async function VitrinePage({ params, searchParams }: PageProps) {
                         ))}
                     </ul>
                   </section>
-                  {betweenBanners[index] && <BannerCard banner={betweenBanners[index]} variant="between" />}
+                  {betweenBanners.length > 0 && (
+                    <BannerCarousel banners={betweenBanners} variant="between" />
+                  )}
                 </div>
               ))}
 
               {extraBetweenBanners.length > 0 && (
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {extraBetweenBanners.map((banner) => (
-                    <BannerCard key={banner.id} banner={banner} variant="between" />
-                  ))}
+                <div>
+                  <BannerCarousel banners={extraBetweenBanners} variant="between" />
                 </div>
               )}
 

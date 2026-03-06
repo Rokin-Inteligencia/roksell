@@ -87,6 +87,7 @@ class CampaignBannerOut(BaseModel):
     banner_link_url: Optional[str] = None
     banner_position: Optional[str] = None
     banner_popup: bool
+    banner_display_order: int = 0
     starts_at: Optional[datetime] = None
     ends_at: Optional[datetime] = None
     created_at: datetime
@@ -353,7 +354,6 @@ class CampaignOut(BaseModel):
     name: str
     type: str
     value_percent: int
-    coupon_code: Optional[str] = None
     category_id: Optional[str] = None
     min_order_cents: Optional[int] = None
     starts_at: Optional[datetime] = None
@@ -362,7 +362,6 @@ class CampaignOut(BaseModel):
     usage_limit: Optional[int] = None
     usage_count: int
     apply_mode: Optional[str] = None
-    priority: Optional[int] = None
     rule_config: Optional[dict | str] = None
     store_ids: Optional[List[str]] = None
     banner_enabled: bool
@@ -370,6 +369,7 @@ class CampaignOut(BaseModel):
     banner_popup: bool
     banner_image_url: Optional[str] = None
     banner_link_url: Optional[str] = None
+    banner_display_order: Optional[int] = None
     created_at: datetime
 
     class Config:
@@ -380,7 +380,6 @@ class CampaignCreate(BaseModel):
     name: str
     type: str
     value_percent: int
-    coupon_code: Optional[str] = None
     category_id: Optional[str] = None
     min_order_cents: Optional[int] = None
     starts_at: Optional[datetime] = None
@@ -388,7 +387,6 @@ class CampaignCreate(BaseModel):
     is_active: bool = True
     usage_limit: Optional[int] = None
     apply_mode: Optional[str] = None
-    priority: Optional[int] = None
     rule_config: Optional[dict] = None
     store_ids: Optional[List[str]] = None
     banner_enabled: bool = False
@@ -396,13 +394,13 @@ class CampaignCreate(BaseModel):
     banner_popup: bool = False
     banner_image_url: Optional[str] = None
     banner_link_url: Optional[str] = None
+    banner_display_order: int = 0
 
 
 class CampaignUpdate(BaseModel):
     name: Optional[str] = None
     type: Optional[str] = None
     value_percent: Optional[int] = None
-    coupon_code: Optional[str] = None
     category_id: Optional[str] = None
     min_order_cents: Optional[int] = None
     starts_at: Optional[datetime] = None
@@ -410,7 +408,6 @@ class CampaignUpdate(BaseModel):
     is_active: Optional[bool] = None
     usage_limit: Optional[int] = None
     apply_mode: Optional[str] = None
-    priority: Optional[int] = None
     rule_config: Optional[dict] = None
     store_ids: Optional[List[str]] = None
     banner_enabled: Optional[bool] = None
@@ -418,6 +415,7 @@ class CampaignUpdate(BaseModel):
     banner_popup: Optional[bool] = None
     banner_image_url: Optional[str] = None
     banner_link_url: Optional[str] = None
+    banner_display_order: Optional[int] = None
 
     class Config:
         extra = "ignore"

@@ -35,7 +35,6 @@ export type Campaign = {
   name: string;
   type: "order_percent" | "shipping_percent" | "category_percent" | "rule";
   value_percent: number;
-  coupon_code?: string | null;
   category_id?: string | null;
   min_order_cents?: number | null;
   starts_at?: string | null;
@@ -44,7 +43,6 @@ export type Campaign = {
   usage_limit?: number | null;
   usage_count: number;
   apply_mode?: "first" | "stack" | null;
-  priority?: number | null;
   rule_config?: Record<string, unknown> | null;
   store_ids?: string[] | null;
   banner_enabled: boolean;
@@ -52,6 +50,7 @@ export type Campaign = {
   banner_popup: boolean;
   banner_image_url?: string | null;
   banner_link_url?: string | null;
+  banner_display_order?: number;
   created_at: string;
 };
 
@@ -62,6 +61,7 @@ export type CampaignBanner = {
   banner_link_url?: string | null;
   banner_position?: "top" | "between" | null;
   banner_popup?: boolean | null;
+  banner_display_order?: number;
   starts_at?: string | null;
   ends_at?: string | null;
   created_at: string;

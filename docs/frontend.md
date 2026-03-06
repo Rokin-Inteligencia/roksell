@@ -18,6 +18,8 @@ Base: `roksell-frontend/src`
 - `components/`
   - componentes compartilhados e componentes admin
   - `catalog/PriceInput.tsx`: campo de preço com preenchimento a partir dos centavos (portal catálogo)
+  - `admin/FieldTooltip.tsx`: ícone ? com tooltip para campos de formulário
+  - `admin/BannerCropModal.tsx`: ajuste de imagem de banner com zoom e dimensões pré-definidas (1200×400 px)
 - `lib/`
   - utilitarios HTTP, auth e hooks
 - `store/`

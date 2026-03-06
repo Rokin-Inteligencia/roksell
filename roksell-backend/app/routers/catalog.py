@@ -96,7 +96,7 @@ def get_catalog(
         .filter(models.Campaign.banner_image_url != "")
         .filter(or_(models.Campaign.starts_at.is_(None), models.Campaign.starts_at <= now))
         .filter(or_(models.Campaign.ends_at.is_(None), models.Campaign.ends_at >= now))
-        .order_by(models.Campaign.created_at.desc())
+        .order_by(asc(models.Campaign.banner_display_order), models.Campaign.created_at.desc())
         .all()
     )
     campaign_store_rows = (

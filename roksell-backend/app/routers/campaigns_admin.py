@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
-from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app import models, schemas
@@ -148,7 +147,6 @@ def _campaign_out_payload(db: Session, tenant_id: str, campaign: models.Campaign
         "name": campaign.name,
         "type": campaign.type.value if hasattr(campaign.type, "value") else str(campaign.type),
         "value_percent": campaign.value_percent,
-        "coupon_code": campaign.coupon_code,
         "category_id": campaign.category_id,
         "min_order_cents": campaign.min_order_cents,
         "starts_at": campaign.starts_at,
@@ -157,7 +155,6 @@ def _campaign_out_payload(db: Session, tenant_id: str, campaign: models.Campaign
         "usage_limit": campaign.usage_limit,
         "usage_count": campaign.usage_count,
         "apply_mode": campaign.apply_mode,
-        "priority": campaign.priority,
         "rule_config": rule_config,
         "store_ids": store_ids,
         "banner_enabled": campaign.banner_enabled,
@@ -165,6 +162,7 @@ def _campaign_out_payload(db: Session, tenant_id: str, campaign: models.Campaign
         "banner_popup": campaign.banner_popup,
         "banner_image_url": campaign.banner_image_url,
         "banner_link_url": campaign.banner_link_url,
+        "banner_display_order": getattr(campaign, "banner_display_order", 0),
         "created_at": campaign.created_at,
     }
 
@@ -193,9 +191,7 @@ def list_campaigns(
     query = db.query(models.Campaign).filter(models.Campaign.tenant_id == tenant.id)
     if search:
         term = f"%{search.strip()}%"
-        query = query.filter(
-            or_(models.Campaign.name.ilike(term), models.Campaign.coupon_code.ilike(term))
-        )
+        query = query.filter(models.Campaign.name.ilike(term))
     campaigns = query.order_by(models.Campaign.created_at.desc()).offset(offset).limit(limit).all()
     return [_campaign_out_payload(db, tenant.id, campaign) for campaign in campaigns]
 
@@ -208,7 +204,7 @@ def create_campaign(
     user: models.User = Depends(require_roles(models.UserRole.owner, models.UserRole.manager, models.UserRole.operator)),
 ):
     ctype = _coerce_type(payload.type)
-    coupon_code = _normalize_coupon(payload.coupon_code)
+    coupon_code = None
     _validate_dates(payload.starts_at, payload.ends_at)
 
     if payload.value_percent < 0 or payload.value_percent > 100:
@@ -241,7 +237,6 @@ def create_campaign(
         rule_config = None
 
     apply_mode = _normalize_apply_mode(payload.apply_mode)
-    priority = _normalize_priority(payload.priority)
     allowed_store_ids = user_accessible_store_ids(db=db, tenant_id=tenant.id, user=user)
     store_ids = _load_store_ids(db, tenant.id, payload.store_ids, allowed_store_ids=allowed_store_ids)
 
@@ -278,9 +273,9 @@ def create_campaign(
         banner_popup=banner_popup,
         banner_image_url=banner_image_url,
         banner_link_url=banner_link_url,
+        banner_display_order=getattr(payload, "banner_display_order", 0) or 0,
         rule_config=json.dumps(rule_config) if rule_config else None,
         apply_mode=apply_mode,
-        priority=priority,
     )
     db.add(campaign)
     db.flush()
@@ -315,7 +310,6 @@ def update_campaign(
         raise HTTPException(404, "Campaign not found")
 
     ctype = _coerce_type(payload.type) if payload.type is not None else campaign.type
-    coupon_code = _normalize_coupon(payload.coupon_code) if payload.coupon_code is not None else campaign.coupon_code
     starts_at = payload.starts_at if payload.starts_at is not None else campaign.starts_at
     ends_at = payload.ends_at if payload.ends_at is not None else campaign.ends_at
     _validate_dates(starts_at, ends_at)
@@ -364,11 +358,6 @@ def update_campaign(
         if payload.apply_mode is not None
         else campaign.apply_mode
     )
-    priority = (
-        _normalize_priority(payload.priority)
-        if payload.priority is not None
-        else campaign.priority
-    )
     store_ids = None
     if payload.store_ids is not None:
         allowed_store_ids = user_accessible_store_ids(db=db, tenant_id=tenant.id, user=user)
@@ -406,7 +395,6 @@ def update_campaign(
     campaign.name = payload.name.strip() if payload.name is not None else campaign.name
     campaign.type = ctype
     campaign.value_percent = value_percent
-    campaign.coupon_code = coupon_code
     campaign.category_id = category_id
     campaign.min_order_cents = payload.min_order_cents if payload.min_order_cents is not None else campaign.min_order_cents
     campaign.starts_at = starts_at
@@ -418,9 +406,10 @@ def update_campaign(
     campaign.banner_popup = banner_popup
     campaign.banner_image_url = banner_image_url
     campaign.banner_link_url = banner_link_url
+    if payload.banner_display_order is not None:
+        campaign.banner_display_order = payload.banner_display_order
     campaign.rule_config = rule_config
     campaign.apply_mode = apply_mode
-    campaign.priority = priority
     campaign.updated_at = datetime.now(timezone.utc)
 
     if store_ids is not None:
