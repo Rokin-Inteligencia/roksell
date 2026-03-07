@@ -237,7 +237,7 @@ export default function StoresAdminPage() {
       /* ignore */
     } finally {
       clearAdminToken();
-      window.location.href = "/portal/login";
+      window.location.href = "/roksell/login";
     }
   }
 

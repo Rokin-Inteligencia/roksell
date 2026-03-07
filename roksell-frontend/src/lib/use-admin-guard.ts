@@ -6,7 +6,7 @@ type AdminGuardOptions = {
 };
 
 /**
- * Client-only guard that redirects to /portal/login if no admin session exists.
+ * Client-only guard that redirects to /roksell/login if no admin session exists.
  * Returns true when it is safe to render the protected page.
  */
 export function useAdminGuard(options: AdminGuardOptions = {}) {
@@ -18,19 +18,19 @@ export function useAdminGuard(options: AdminGuardOptions = {}) {
       try {
         const res = await fetch("/api/auth/me", { credentials: "include" });
         if (!res.ok) {
-          window.location.href = "/portal/login";
+          window.location.href = "/roksell/login";
           return;
         }
         if (!options.skipOnboardingCheck) {
           const path = window.location.pathname;
-          const isOnboardingPage = path.startsWith("/portal/primeiro-acesso");
+          const isOnboardingPage = path.startsWith("/roksell/primeiro-acesso");
           if (!isOnboardingPage) {
             try {
               const onboardingRes = await fetch("/api/admin/onboarding/state", { credentials: "include" });
               if (onboardingRes.ok) {
                 const onboarding = await onboardingRes.json();
                 if (onboarding?.needs_onboarding) {
-                  window.location.href = "/portal/primeiro-acesso";
+                  window.location.href = "/roksell/primeiro-acesso";
                   return;
                 }
               }
@@ -41,7 +41,7 @@ export function useAdminGuard(options: AdminGuardOptions = {}) {
         }
         if (active) setReady(true);
       } catch {
-        window.location.href = "/portal/login";
+        window.location.href = "/roksell/login";
       }
     }
     check();

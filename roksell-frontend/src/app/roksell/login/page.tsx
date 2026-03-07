@@ -15,12 +15,12 @@ export default function AdminLogin() {
   async function resolvePostLoginPath(): Promise<string> {
     try {
       const onboardingRes = await fetch("/api/admin/onboarding/state", { credentials: "include" });
-      if (!onboardingRes.ok) return "/portal";
+      if (!onboardingRes.ok) return "/roksell";
       const onboarding = await onboardingRes.json();
-      if (onboarding?.needs_onboarding) return "/portal/primeiro-acesso";
-      return "/portal";
+      if (onboarding?.needs_onboarding) return "/roksell/primeiro-acesso";
+      return "/roksell";
     } catch {
-      return "/portal";
+      return "/roksell";
     }
   }
 

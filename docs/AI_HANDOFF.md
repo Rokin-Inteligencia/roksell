@@ -1,4 +1,4 @@
-﻿# AI Handoff Guide
+# AI Handoff Guide
 
 Este documento foi feito para agentes de IA que chegam sem contexto.
 Use este roteiro antes de qualquer alteracao relevante.
@@ -9,7 +9,7 @@ Plataforma SaaS multi-tenant para restaurantes com:
 
 - vitrine publica (`/vitrine/[slug]`)
 - checkout com frete
-- portal de operacao (`/portal/*`)
+- portal de operacao (`/roksell/*`)
 - admin central SaaS (`/admin/*`)
 
 ## 2. Mapa Rapido do Workspace

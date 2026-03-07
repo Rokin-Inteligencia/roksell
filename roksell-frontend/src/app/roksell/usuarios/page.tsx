@@ -20,7 +20,7 @@ export default function UsersAdminPage() {
       /* ignore */
     } finally {
       clearAdminToken();
-      window.location.href = "/portal/login";
+      window.location.href = "/roksell/login";
     }
   }
 

@@ -18,7 +18,7 @@ export default function Home() {
             </div>
             <div className="flex items-center gap-3">
               <a
-                href="/portal"
+                href="/roksell"
                 className="px-5 py-3 rounded-full bg-[#6320ee] text-white text-sm font-semibold shadow-lg shadow-[#6320ee]/30 hover:brightness-95 transition"
               >
                 Entrar no portal
@@ -108,7 +108,7 @@ export default function Home() {
           <footer className="flex flex-wrap items-center justify-between gap-4 text-xs text-slate-500">
             <span>Rokin Commerce · 2026</span>
             <div className="flex items-center gap-4">
-              <a href="/portal" className="hover:text-slate-700">Portal</a>
+              <a href="/roksell" className="hover:text-slate-700">Portal</a>
               <a href="/admin" className="hover:text-slate-700">Admin</a>
             </div>
           </footer>

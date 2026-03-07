@@ -40,9 +40,9 @@ Base: `roksell-frontend/src`
 - `/pedido/[id]`: rastreio de pedido publico
 - `/pedidos/[id]`: redirect de compatibilidade para `/pedido/[id]`
 
-## 3.2 Portal (tenant)
+## 3.2 Portal (tenant) — ferramenta RokSell
 
-Prefixo: `/portal/*`
+Prefixo: `/roksell/*`
 
 Paginas principais:
 
@@ -120,7 +120,7 @@ Regra: pagina de portal/admin nao deve chamar backend autenticado direto; deve u
 ## 5.2 Hooks
 
 - `useAdminGuard`
-  - protege `/portal/*`
+  - protege `/roksell/*`
   - valida `/api/auth/me`
   - redireciona para login quando invalido
   - verifica onboarding e redireciona quando necessario
@@ -198,7 +198,7 @@ Configuracao:
 
 ## 10. Como Criar Nova Pagina no Portal (Padrao)
 
-1. Criar rota em `src/app/portal/<modulo>/page.tsx`.
+1. Criar rota em `src/app/roksell/<modulo>/page.tsx`.
 2. Marcar como client component se usar hooks (`"use client"`).
 3. Aplicar `const ready = useAdminGuard();`.
 4. Carregar dados via `adminFetch`.
@@ -223,7 +223,7 @@ Configuracao:
 
 ## 13. Pagina de Produtos (Portal Catalogo)
 
-- Rota: `/portal/catalog`. Abas: Produtos, Categorias, Adicionais (cada uma com listagem e filtro de status).
+- Rota: `/roksell/produtos`. Abas: Produtos, Categorias, Adicionais (cada uma com listagem e filtro de status).
 - Produtos: ate 5 fotos em carrossel, video unico com posicao (inicio ou final). Campo preco: componente `PriceInput` (centavos-first).
 - Categorias: hierarquia aberta por padrao, minimizar por categoria; campo "Ordem de exibicao".
 - Adicionais: foto (upload) e mesmo formato de preco. Labels obrigatorio/opcional nos formularios.

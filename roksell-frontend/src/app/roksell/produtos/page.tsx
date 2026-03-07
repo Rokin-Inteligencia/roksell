@@ -49,7 +49,7 @@ export default function CatalogAdmin() {
       /* ignore */
     } finally {
       clearAdminToken();
-      window.location.href = "/portal/login";
+      window.location.href = "/roksell/login";
     }
   }
 

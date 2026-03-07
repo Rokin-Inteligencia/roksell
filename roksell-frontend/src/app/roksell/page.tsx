@@ -34,7 +34,7 @@ export default function AdminHome() {
       /* ignore */
     } finally {
       clearAdminToken();
-      window.location.href = "/portal/login";
+      window.location.href = "/roksell/login";
     }
   }
 
@@ -115,7 +115,7 @@ export default function AdminHome() {
             <section className="space-y-3">
               <div className="flex items-center justify-between text-slate-900">
                 <h2 className="text-xl font-semibold">Central operacional</h2>
-                <Link href="/portal/insights" className="text-sm underline underline-offset-4 text-slate-600">
+                <Link href="/roksell/insights" className="text-sm underline underline-offset-4 text-slate-600">
                   Abrir insights
                 </Link>
               </div>
