@@ -175,7 +175,7 @@ export default function FirstAccessPage() {
         const data = await adminFetch<OnboardingState>("/admin/onboarding/state");
         if (!active) return;
         if (!data.needs_onboarding) {
-          router.replace("/portal");
+          router.replace("/roksell");
           return;
         }
         setStoreId(data.store_id ?? null);
@@ -304,7 +304,7 @@ export default function FirstAccessPage() {
           operating_hours: form.operating_hours,
         }),
       });
-      router.replace("/portal");
+      router.replace("/roksell");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Falha ao salvar onboarding");
     } finally {

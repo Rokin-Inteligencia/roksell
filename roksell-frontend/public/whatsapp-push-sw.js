@@ -14,7 +14,7 @@ self.addEventListener("push", (event) => {
     tag: payload.tag || "whatsapp-message",
     renotify: true,
     data: {
-      url: payload.url || "/portal/mensagens",
+      url: payload.url || "/roksell/mensagens",
     },
   };
 
@@ -23,7 +23,7 @@ self.addEventListener("push", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const targetUrl = event.notification?.data?.url || "/portal/mensagens";
+  const targetUrl = event.notification?.data?.url || "/roksell/mensagens";
 
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {

@@ -14,6 +14,10 @@ import { usePathname } from "next/navigation";
 import { useOrgName } from "@/lib/use-org-name";
 import { clearAdminToken } from "@/lib/admin-auth";
 
+const BANNER_WIDTH = 1200;
+const BANNER_HEIGHT = 400;
+const BANNER_ASPECT = BANNER_WIDTH / BANNER_HEIGHT;
+
 function RequiredLabel({ children }: { children: string }) {
   return (
     <span className="text-sm font-medium text-slate-800">
@@ -150,12 +154,6 @@ function fmtDateShort(value?: string | null) {
   return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
-function fmtDateShort(value?: string | null) {
-  if (!value) return "-";
-  const d = new Date(value);
-  return d.toLocaleDateString("pt-BR");
-}
-
 export default function CampaignsAdmin() {
   const ready = useAdminGuard();
   const tenantName = useOrgName();
@@ -171,7 +169,7 @@ export default function CampaignsAdmin() {
       /* ignore */
     } finally {
       clearAdminToken();
-      window.location.href = "/portal/login";
+      window.location.href = "/roksell/login";
     }
   }
 
@@ -194,6 +192,8 @@ export default function CampaignsAdmin() {
   const [removeBanner, setRemoveBanner] = useState(false);
   const [showCropModal, setShowCropModal] = useState(false);
   const [fileToCrop, setFileToCrop] = useState<File | null>(null);
+  const [bannerPositionY, setBannerPositionY] = useState(50);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const formRef = useRef<HTMLDivElement>(null);
   const fieldRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
@@ -337,7 +337,7 @@ export default function CampaignsAdmin() {
     setFieldErrors(errors);
     if (Object.keys(errors).length > 0) {
       const firstKey = ["name", "category_id", "rule_config"].find((k) => errors[k]);
-      const el = firstKey && formRefs.current[firstKey];
+      const el = firstKey && fieldRefs.current[firstKey];
       if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
       setError("Preencha os campos obrigatórios.");
       return;
@@ -428,8 +428,7 @@ export default function CampaignsAdmin() {
       }
       if (bannerFile && campaignId && !removeBanner) {
         const formData = new FormData();
-        const blob = await cropBannerToBlob(bannerFile, bannerPositionY);
-        formData.append("file", blob, bannerFile.name);
+        formData.append("file", bannerFile, bannerFile.name);
         await adminUpload(`/admin/campaigns/${campaignId}/banner`, formData);
         if (bannerEnabledRequested && !bannerEnabledForPayload) {
           await adminFetch(`/admin/campaigns/${campaignId}`, {
@@ -933,7 +932,7 @@ export default function CampaignsAdmin() {
             </div>
 
             {form.type === "rule" && (
-              <div ref={(r) => { formRefs.current.rule_config = r; }} className="rounded-2xl border border-slate-200 bg-slate-50 p-3 space-y-4">
+              <div ref={(r) => { fieldRefs.current.rule_config = r; }} className="rounded-2xl border border-slate-200 bg-slate-50 p-3 space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Regras</p>

@@ -127,7 +127,7 @@ export default function InsightsAdmin() {
       /* ignore */
     } finally {
       clearAdminToken();
-      window.location.href = "/portal/login";
+      window.location.href = "/roksell/login";
     }
   }
   const [data, setData] = useState<InsightResponse | null>(null);

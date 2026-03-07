@@ -31,7 +31,7 @@ export default function VitrineAdminShortcut() {
 
   return (
     <a
-      href="/portal"
+      href="/roksell"
       className="inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs font-semibold text-neutral-700 hover:bg-neutral-100"
       title="Ir para o portal"
     >

@@ -4,7 +4,7 @@ import { useEffect } from "react";
 
 export default function ConfigRedirectPage() {
   useEffect(() => {
-    window.location.replace("/portal/lojas");
+    window.location.replace("/roksell/lojas");
   }, []);
 
   return (

@@ -90,7 +90,7 @@ export default function MensagensPage() {
       /* ignore */
     } finally {
       clearAdminToken();
-      window.location.href = "/portal/login";
+      window.location.href = "/roksell/login";
     }
   }
 
@@ -134,7 +134,7 @@ export default function MensagensPage() {
   }
 
   async function getPushRegistration(): Promise<ServiceWorkerRegistration> {
-    return navigator.serviceWorker.register("/whatsapp-push-sw.js", { scope: "/portal/" });
+    return navigator.serviceWorker.register("/whatsapp-push-sw.js", { scope: "/roksell/" });
   }
 
   async function subscribePushNotifications() {

@@ -13,4 +13,11 @@ const withPWA = require("next-pwa")({
 
 module.exports = withPWA({
   reactStrictMode: true,
+  async redirects() {
+    return [
+      { source: "/portal", destination: "/roksell", permanent: true },
+      { source: "/portal/:path*", destination: "/roksell/:path*", permanent: true },
+      { source: "/roksell/catalog", destination: "/roksell/produtos", permanent: true },
+    ];
+  },
 });

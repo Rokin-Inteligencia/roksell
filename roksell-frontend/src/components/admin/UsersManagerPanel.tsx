@@ -403,7 +403,7 @@ export function UsersManagerPanel() {
       setStartingFirstAccessTest(true);
       setUserFormError(null);
       await adminFetch("/admin/onboarding/test-enable", { method: "POST" });
-      window.location.href = "/portal/primeiro-acesso";
+      window.location.href = "/roksell/primeiro-acesso";
     } catch (e) {
       setUserFormError(e instanceof Error ? e.message : "Falha ao iniciar teste de primeiro acesso");
     } finally {

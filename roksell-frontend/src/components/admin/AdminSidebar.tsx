@@ -96,7 +96,7 @@ export function AdminSidebar({ menu, footer, collapsible, orgName, currentPath }
 
   const hasMessagesMenu = menu.some(
     (item) =>
-      item.href === "/portal/mensagens" &&
+      item.href === "/roksell/mensagens" &&
       item.enabled &&
       (!item.moduleKey || hasModule(item.moduleKey))
   );
@@ -121,9 +121,9 @@ export function AdminSidebar({ menu, footer, collapsible, orgName, currentPath }
   ].join(" ");
   const vitrineBaseUrl = (process.env.NEXT_PUBLIC_VITRINE_BASE_URL || "https://www.rokin.com.br").replace(/\/$/, "");
   const resolvedMenu = menu.map<SidebarLink>((item) => {
-    const isMessages = item.href === "/portal/mensagens";
+    const isMessages = item.href === "/roksell/mensagens";
     const messageBadge =
-      item.href === "/portal/mensagens" && whatsappUnread && whatsappUnread > 0
+      item.href === "/roksell/mensagens" && whatsappUnread && whatsappUnread > 0
         ? String(whatsappUnread)
         : item.badge;
     const badgeTone = isMessages && whatsappUnread && whatsappUnread > 0 ? "whatsapp" : item.badgeTone;
