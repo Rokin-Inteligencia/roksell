@@ -4,6 +4,7 @@ Toda a lógica de negócio e persistência está em app.services.checkout.
 """
 import logging
 import os
+from typing import Dict
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException

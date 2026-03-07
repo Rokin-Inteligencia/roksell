@@ -1,7 +1,7 @@
 from datetime import datetime, date
 from typing import List, Optional, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, EmailStr, Field, model_validator
 from app import models
 
 AvailabilityStatus = Literal["available", "order", "unavailable"]
