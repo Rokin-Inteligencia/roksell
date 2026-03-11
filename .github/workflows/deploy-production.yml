@@ -1,0 +1,86 @@
+name: Deploy production
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Deploy to Oracle VM
+    runs-on: ubuntu-latest
+    if: github.event.repository.fork == false
+
+    env:
+      ORACLE_HOST: ${{ secrets.ORACLE_HOST }}
+      ORACLE_SSH_USER: ${{ secrets.ORACLE_SSH_USER }}
+      ORACLE_SSH_PORT: ${{ secrets.ORACLE_SSH_PORT }}
+
+    steps:
+      - name: Checkout (for metadata only)
+        uses: actions/checkout@v4
+
+      - name: Validate secrets
+        run: |
+          if [ -z "$ORACLE_HOST" ] || [ -z "$ORACLE_SSH_USER" ]; then
+            echo "ORACLE_HOST and ORACLE_SSH_USER secrets must be set."
+            exit 1
+          fi
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+        run: |
+          if [ -z "$SSH_PRIVATE_KEY" ]; then
+            echo "ORACLE_SSH_KEY secret must be set."
+            exit 1
+          fi
+
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+          HOST="$ORACLE_HOST"
+          PORT="${ORACLE_SSH_PORT:-22}"
+          ssh-keyscan -p "$PORT" "$HOST" >> ~/.ssh/known_hosts
+
+      - name: Deploy via SSH (git pull + docker compose)
+        run: |
+          HOST="$ORACLE_HOST"
+          USER="$ORACLE_SSH_USER"
+          PORT="${ORACLE_SSH_PORT:-22}"
+
+          ssh -p "$PORT" "$USER@$HOST" << 'EOF'
+          set -e
+
+          # Ajuste este caminho se você clonar o repositório em outro local
+          APP_DIR="/opt/roksell"
+
+          if [ ! -d "$APP_DIR" ]; then
+            echo "Diretório \$APP_DIR não encontrado no servidor. Crie-o e faça o clone do repositório antes do primeiro deploy."
+            exit 1
+          fi
+
+          cd "$APP_DIR"
+
+          # Atualiza código da branch main
+          git fetch --all
+          git checkout main
+          git pull --ff-only origin main
+
+          # Atualiza containers (assumindo docker compose já configurado no servidor)
+          docker compose build
+          docker compose up -d --remove-orphans
+
+          # Healthcheck básico do backend (ajuste a URL/porta se necessário)
+          if command -v curl >/dev/null 2>&1; then
+            curl -f http://127.0.0.1:8000/health || {
+              echo "Healthcheck falhou. Logs do backend:"
+              docker compose logs backend || true
+              exit 1
+            }
+          else
+            echo "curl não disponível; pulei healthcheck HTTP."
+          fi
+          EOF
+
