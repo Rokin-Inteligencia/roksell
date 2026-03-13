@@ -2,6 +2,8 @@ export type Category = { id: string; store_id?: string; name: string; is_active:
 export type Product = {
   id: string;
   store_id?: string;
+  code?: number;
+  unit_of_measure?: string | null;
   name: string;
   description?: string;
   price_cents: number;
@@ -131,4 +133,7 @@ export type StoreInventoryItem = {
   store_id: string;
   quantity: number;
   product_name?: string;
+  product_code?: string | null;
+  product_image_url?: string | null;
+  unit_of_measure?: string | null;
 };

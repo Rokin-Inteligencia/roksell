@@ -88,6 +88,8 @@ class Product(Base):
     )
     store_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("stores.id", ondelete="CASCADE"), index=True)
     category_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("categories.id", ondelete="SET NULL"))
+    code: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    unit_of_measure: Mapped[str | None] = mapped_column(String(24), nullable=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     price_cents: Mapped[int] = mapped_column(Integer, nullable=False)

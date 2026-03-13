@@ -227,3 +227,13 @@ Configuracao:
 - Produtos: ate 5 fotos em carrossel, video unico com posicao (inicio ou final). Campo preco: componente `PriceInput` (centavos-first).
 - Categorias: hierarquia aberta por padrao, minimizar por categoria; campo "Ordem de exibicao".
 - Adicionais: foto (upload) e mesmo formato de preco. Labels obrigatorio/opcional nos formularios.
+- Produtos: campo opcional "Unidade de medida" (ex.: un, kg, cx) exibida no menu de estoque.
+
+## 14. Pagina de Estoque (Portal)
+
+- Rota: `/roksell/estoque`. Listagem por loja com filtro de status (Ativos/Todos/Inativos), padrao Ativos.
+- Tabela: foto (thumbnail), codigo do produto (6 digitos), nome, estoque atual (quantidade + unidade de medida) e botao de movimentacao.
+- Busca: filtra por nome ou codigo do produto (campo unico).
+- Filtro de status: um botao com icone de filtro; ao clicar, exibe as opcoes Ativos / Todos / Inativos.
+- Movimentacao: modal com tipo (adicao ou subtracao) e quantidade; chama `POST /admin/inventory/move`.
+- Contagem de produtos exibida abaixo do titulo "Produtos" da grade, em italico ("X produtos").
