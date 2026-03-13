@@ -226,6 +226,19 @@ def _normalize_master_name(value: str | None) -> str:
     return name or "Produto"
 
 
+def _next_product_code(db: Session, tenant_id: str, store_id: str | None) -> int:
+    """Return next sequential code (1..999999) for (tenant_id, store_id). Unique per tenant and store."""
+    q = db.query(func.coalesce(func.max(models.Product.code), 0)).filter(
+        models.Product.tenant_id == tenant_id,
+    )
+    if store_id is not None:
+        q = q.filter(models.Product.store_id == store_id)
+    else:
+        q = q.filter(models.Product.store_id.is_(None))
+    result = q.scalar()
+    return (result or 0) + 1
+
+
 def _load_product_master_or_400(db: Session, tenant_id: str, product_master_id: str) -> models.ProductMaster:
     master = (
         db.query(models.ProductMaster)
@@ -649,12 +662,17 @@ def create_product(
     else:
         master = _create_local_product_master(db, tenant_id, name)
 
+    next_code = _next_product_code(db, tenant_id, target_store_id)
+    unit_of_measure = (payload.unit_of_measure or "").strip()[:24] or None
+
     product = models.Product(
         id=str(uuid.uuid4()),
         tenant_id=tenant_id,
         product_master_id=master.id,
         store_id=target_store_id,
         category_id=payload.category_id,
+        code=next_code,
+        unit_of_measure=unit_of_measure,
         name=name,
         description=payload.description,
         price_cents=price_cents,
@@ -765,6 +783,8 @@ def update_product(
         product.display_order = payload.display_order
     if payload.tags is not None:
         product.tags = payload.tags
+    if payload.unit_of_measure is not None:
+        product.unit_of_measure = (payload.unit_of_measure or "").strip()[:24] or None
     if "product_master_id" in payload.model_fields_set:
         if not payload.product_master_id:
             raise HTTPException(status_code=400, detail="product_master_id is required")
@@ -784,6 +804,8 @@ def update_product(
             requested_additional_ids=payload.additional_ids or [],
         )
 
+    if target_store_id != product.store_id:
+        product.code = _next_product_code(db, tenant_id, target_store_id)
     product.store_id = target_store_id
 
     db.commit()

@@ -225,7 +225,7 @@ def upload_additional_image(
 
     ext = detected_ext
     filename = f"{uuid.uuid4()}.{ext}"
-    store_segment = _resolve_store_media_segment(db, tenant.id, additional.store_id)
+    store_segment = catalog_admin_svc.resolve_store_media_segment(db, tenant.id, additional.store_id)
     key = build_media_key("tenants", tenant.slug, "stores", store_segment, "additionals", additional.id, filename)
 
     storage_delete_by_url(additional.image_url)
@@ -438,21 +438,7 @@ def _validate_image_upload(file: UploadFile, contents: bytes) -> str:
     if detected_ext != expected_ext:
         raise HTTPException(status_code=400, detail="Invalid image file")
 
-    ext = detected_ext
-    filename = f"{uuid.uuid4()}.{ext}"
-    store_segment = _resolve_store_media_segment(db, tenant.id, product.store_id)
-    key = build_media_key("tenants", tenant.slug, "stores", store_segment, "products", product.id, filename)
-
-    current_urls = list(product.image_urls or ([product.image_url] if product.image_url else []))
-    if len(current_urls) >= 5:
-        raise HTTPException(status_code=400, detail="Maximum 5 images per product")
-    new_url = storage_save(key, contents, file.content_type)
-    current_urls.append(new_url)
-    product.image_urls = current_urls
-    product.image_url = current_urls[0]
-    db.commit()
-    db.refresh(product)
-    return product
+    return detected_ext
 
 
 def _validate_video_upload(file: UploadFile, contents: bytes) -> str:

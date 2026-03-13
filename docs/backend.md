@@ -152,7 +152,7 @@ Blocos:
 - clientes: `/admin/customers/*`
 - campanhas: `/admin/campaigns/*`
 - lojas e frete por faixa: `/admin/stores/*`, `/admin/shipping/*`
-- estoque: `/admin/inventory/*`
+- estoque: `/admin/inventory/*` — listagem com filtro de status (active/inactive/all), movimentacao via `POST /admin/inventory/move` (operacao add/subtract)
 - usuarios e grupos: `/admin/users/*`, `/admin/groups/*`
 - insights: `/admin/insights`
 - billing tenant: `/admin/billing/*`

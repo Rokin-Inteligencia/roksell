@@ -69,9 +69,16 @@ def list_inventory_stores(
     ]
 
 
+def _product_first_image(product: models.Product) -> str | None:
+    if product.image_urls and len(product.image_urls) > 0:
+        return product.image_urls[0]
+    return product.image_url
+
+
 @router.get("", response_model=list[schemas.StoreInventoryOut])
 def list_inventory(
     store_id: str = Query(..., description="ID da loja"),
+    status: str = Query("active", description="Filtro status: active, inactive, all"),
     db: Session = Depends(get_db),
     tenant: TenantContext = Depends(require_module_action("inventory", "view")),
     user: models.User = Depends(require_roles(models.UserRole.owner, models.UserRole.manager, models.UserRole.operator)),
@@ -84,13 +91,18 @@ def list_inventory(
     if store_id not in allowed_store_ids:
         raise HTTPException(status_code=403, detail="Store access denied")
 
+    product_filter = (
+        models.Product.tenant_id == tenant.id,
+        (models.Product.store_id == store_id) | (models.Product.store_id.is_(None)),
+    )
+    if status == "active":
+        product_filter = (*product_filter, models.Product.is_active.is_(True))
+    elif status == "inactive":
+        product_filter = (*product_filter, models.Product.is_active.is_(False))
+
     products = (
         db.query(models.Product)
-        .filter(
-            models.Product.tenant_id == tenant.id,
-            models.Product.is_active.is_(True),
-            (models.Product.store_id == store_id) | (models.Product.store_id.is_(None)),
-        )
+        .filter(*product_filter)
         .order_by(models.Product.display_order.asc(), models.Product.name.asc())
         .all()
     )
@@ -110,6 +122,9 @@ def list_inventory(
             product_name=product.name,
             store_id=store_id,
             quantity=qty_by_product.get(product.id, 0),
+            product_code=f"{getattr(product, 'code', 0):06d}",
+            product_image_url=_product_first_image(product),
+            unit_of_measure=getattr(product, "unit_of_measure", None),
         )
         for product in products
     ]
@@ -168,4 +183,74 @@ def upsert_inventory(
         product_name=product.name,
         store_id=inventory.store_id,
         quantity=int(inventory.quantity or 0),
+        product_code=f"{getattr(product, 'code', 0):06d}",
+        product_image_url=_product_first_image(product),
+        unit_of_measure=getattr(product, "unit_of_measure", None),
+    )
+
+
+@router.post("/move", response_model=schemas.StoreInventoryOut)
+def move_inventory(
+    payload: schemas.StoreInventoryMove,
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(require_module_action("inventory", "edit")),
+    user: models.User = Depends(require_roles(models.UserRole.owner, models.UserRole.manager, models.UserRole.operator)),
+):
+    store = _get_store(db, tenant.id, payload.store_id)
+    if not store:
+        raise HTTPException(status_code=404, detail="Loja nao encontrada")
+
+    allowed_store_ids = user_accessible_store_ids(db=db, tenant_id=tenant.id, user=user)
+    if payload.store_id not in allowed_store_ids:
+        raise HTTPException(status_code=403, detail="Store access denied")
+
+    product = _get_product(db, tenant.id, payload.product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Produto nao encontrado")
+    if product.store_id and product.store_id != payload.store_id:
+        raise HTTPException(status_code=400, detail="Produto nao pertence a loja informada")
+
+    inventory = (
+        db.query(models.StoreInventory)
+        .filter(
+            models.StoreInventory.tenant_id == tenant.id,
+            models.StoreInventory.store_id == payload.store_id,
+            models.StoreInventory.product_id == payload.product_id,
+        )
+        .with_for_update()
+        .first()
+    )
+    current = int(inventory.quantity or 0) if inventory else 0
+    if payload.operation == "subtract":
+        new_qty = current - payload.quantity
+        if new_qty < 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Estoque insuficiente. Atual: {current}. Nao e possivel subtrair {payload.quantity}.",
+            )
+    else:
+        new_qty = current + payload.quantity
+
+    if not inventory:
+        inventory = models.StoreInventory(
+            id=str(uuid.uuid4()),
+            tenant_id=tenant.id,
+            store_id=payload.store_id,
+            product_id=payload.product_id,
+            quantity=new_qty,
+        )
+        db.add(inventory)
+    else:
+        inventory.quantity = new_qty
+
+    db.commit()
+    db.refresh(inventory)
+    return schemas.StoreInventoryOut(
+        product_id=inventory.product_id,
+        product_name=product.name,
+        store_id=inventory.store_id,
+        quantity=int(inventory.quantity or 0),
+        product_code=f"{getattr(product, 'code', 0):06d}",
+        product_image_url=_product_first_image(product),
+        unit_of_measure=getattr(product, "unit_of_measure", None),
     )

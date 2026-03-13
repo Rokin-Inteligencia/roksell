@@ -14,6 +14,8 @@ class ProductOut(BaseModel):
     id: str
     product_master_id: Optional[str] = None
     store_id: Optional[str] = None
+    code: int = 1
+    unit_of_measure: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None
     price_cents: int
@@ -242,12 +244,22 @@ class StoreInventoryOut(BaseModel):
     store_id: str
     quantity: int
     product_name: Optional[str] = None
+    product_code: Optional[str] = None
+    product_image_url: Optional[str] = None
+    unit_of_measure: Optional[str] = None
 
 
 class StoreInventoryUpdate(BaseModel):
     store_id: str
     product_id: str
     quantity: int
+
+
+class StoreInventoryMove(BaseModel):
+    store_id: str
+    product_id: str
+    operation: Literal["add", "subtract"]
+    quantity: int = Field(..., ge=1, description="Amount to add or subtract")
 
 
 # Checkout
@@ -750,6 +762,7 @@ class ProductCreate(BaseModel):
     category_id: Optional[str] = None
     display_order: int = 0
     tags: Optional[str] = None
+    unit_of_measure: Optional[str] = None
 
 
 class ProductUpdate(BaseModel):
@@ -771,6 +784,7 @@ class ProductUpdate(BaseModel):
     category_id: Optional[str] = None
     display_order: Optional[int] = None
     tags: Optional[str] = None
+    unit_of_measure: Optional[str] = None
 
 
 class OperationsConfigUpdate(BaseModel):

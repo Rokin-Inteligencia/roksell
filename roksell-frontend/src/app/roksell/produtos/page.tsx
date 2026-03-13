@@ -88,6 +88,7 @@ export default function CatalogAdmin() {
     is_custom: false,
     availability_status: "available" as AvailabilityStatus,
     display_order: 0,
+    unit_of_measure: "",
   });
   const [additionalLinkPromptOpen, setAdditionalLinkPromptOpen] = useState(false);
   const [additionalToLink, setAdditionalToLink] = useState<Additional | null>(null);
@@ -294,6 +295,7 @@ export default function CatalogAdmin() {
           is_custom: prod.is_custom ?? false,
           availability_status: resolveAvailabilityStatus(prod),
           display_order: prod.display_order ?? 0,
+          unit_of_measure: prod.unit_of_measure ?? "",
         });
         setProductImageUrls(prod.image_urls ?? (prod.image_url ? [prod.image_url] : []));
         setProductNewImageFiles([]);
@@ -318,6 +320,7 @@ export default function CatalogAdmin() {
           is_custom: false,
           availability_status: "available",
           display_order: cat.display_order ?? 0,
+          unit_of_measure: "",
         });
         setCurrentVideoUrl(null);
         setVideoPreview(null);
@@ -338,6 +341,7 @@ export default function CatalogAdmin() {
           is_custom: false,
           availability_status: "available",
           display_order: additional.display_order ?? 0,
+          unit_of_measure: "",
         });
         setCurrentAdditionalImageUrl(additional.image_url ?? null);
         setAdditionalImagePreview(additional.image_url ?? null);
@@ -360,6 +364,7 @@ export default function CatalogAdmin() {
         is_custom: false,
         availability_status: "available",
         display_order: 0,
+        unit_of_measure: "",
       });
       setCurrentVideoUrl(null);
       setVideoPreview(null);
@@ -419,6 +424,7 @@ export default function CatalogAdmin() {
           availability_status: modalData.availability_status,
           image_urls: productImageUrls,
           video_position: productVideoPosition,
+          unit_of_measure: (modalData.unit_of_measure || "").trim() || null,
         };
         let productId = editingId;
         if (editingId) {
@@ -1400,6 +1406,19 @@ export default function CatalogAdmin() {
                         <option value="regular">Produto</option>
                         <option value="custom">Produto customizado</option>
                       </select>
+                    </label>
+                    <label className="space-y-1">
+                      <span>Unidade de medida <span className="text-slate-400 text-xs">(opcional)</span></span>
+                      <input
+                        type="text"
+                        className="input w-full"
+                        placeholder="Ex.: un, kg, cx, L"
+                        maxLength={24}
+                        value={modalData.unit_of_measure}
+                        onChange={(e) => setModalData({ ...modalData, unit_of_measure: e.target.value })}
+                        aria-label="Unidade de medida"
+                      />
+                      <span className="text-xs text-neutral-500">Exibida no menu de estoque (ex.: un, kg, cx).</span>
                     </label>
                     {!modalData.is_custom && (
                       <>

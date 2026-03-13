@@ -66,6 +66,8 @@ Implicacoes:
   - `UNIQUE (tenant_id, store_id, name)`
 - `products`
   - produto vendavel
+  - `code`: inteiro sequencial unico por (tenant_id, store_id), 6 digitos na API
+  - `unit_of_measure`: unidade de medida (ex.: un, kg, cx) para exibicao no estoque
   - flags: ativo, custom, availability, block_sale
 - `product_additionals`
   - relacionamento N:N produto x adicional
