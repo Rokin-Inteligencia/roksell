@@ -539,6 +539,18 @@ def delete_product(
     db.commit()
 
 
+@router.get("/next-product-code")
+def get_next_product_code(
+    store_id: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(require_module_action("products", "view")),
+    user: models.User = Depends(require_roles(models.UserRole.owner, models.UserRole.manager, models.UserRole.operator)),
+):
+    """Retorna o próximo código sequencial para novo produto na loja."""
+    code = catalog_admin_svc.get_next_product_code(db, tenant.id, user, store_id)
+    return {"code": code}
+
+
 @router.get("", response_model=schemas.CatalogOut)
 def get_admin_catalog(
     store_id: str | None = Query(default=None),

@@ -33,7 +33,9 @@ class StorageBackend(Protocol):
 @dataclass(frozen=True)
 class LocalStorage:
     def save(self, key: str, contents: bytes, content_type: str | None) -> str:
-        dest_path = media_root() / key
+        # Normalizar key para barras (evitar 404 ao servir no Windows)
+        key_normalized = "/".join(part for part in key.replace("\\", "/").split("/") if part)
+        dest_path = media_root() / key_normalized
         ensure_dir(dest_path.parent)
         dest_path.write_bytes(contents)
         return build_public_url(relative_path_for_file(dest_path))

@@ -268,6 +268,17 @@ def _create_local_product_master(db: Session, tenant_id: str, name_canonical: st
 # --- API pública ---
 
 
+def get_next_product_code(
+    db: Session,
+    tenant_id: str,
+    user: models.User,
+    store_id: str | None,
+) -> int:
+    """Retorna o próximo código sequencial para novo produto (para a loja informada ou padrão)."""
+    resolved_store_id = resolve_store_id_for_read(db, tenant_id, user, store_id)
+    return _next_product_code(db, tenant_id, resolved_store_id)
+
+
 def get_catalog_for_admin(
     db: Session,
     tenant_id: str,
@@ -865,6 +876,9 @@ def update_product_media_url(
         raise HTTPException(status_code=404, detail="Product not found")
     if field == "image_url":
         product.image_url = url
+        # Manter image_urls em sync com a imagem principal (evitar lista com URLs obsoletas)
+        if url:
+            product.image_urls = [url]
     elif field == "video_url":
         product.video_url = url
     else:
