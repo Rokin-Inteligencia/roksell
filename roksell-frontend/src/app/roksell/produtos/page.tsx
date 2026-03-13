@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { adminFetch, adminUpload } from "@/lib/admin-api";
 import { useAdminGuard } from "@/lib/use-admin-guard";
 import { Additional, Category, Product } from "@/types";
@@ -71,6 +71,10 @@ export default function CatalogAdmin() {
   const [productFilterOpen, setProductFilterOpen] = useState(false);
   const [categoryFilterOpen, setCategoryFilterOpen] = useState(false);
   const [additionalFilterOpen, setAdditionalFilterOpen] = useState(false);
+  const productFilterRef = useRef<HTMLDivElement>(null);
+  const categoryFilterRef = useRef<HTMLDivElement>(null);
+  const additionalFilterRef = useRef<HTMLDivElement>(null);
+  const [nextProductCode, setNextProductCode] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<CatalogTab>("products");
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
 
@@ -146,6 +150,22 @@ export default function CatalogAdmin() {
     const t = window.setTimeout(() => setQuickSuccessMessage(null), 1800);
     return () => window.clearTimeout(t);
   }, [quickSuccessMessage]);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (productFilterOpen && productFilterRef.current && !productFilterRef.current.contains(e.target as Node)) {
+        setProductFilterOpen(false);
+      }
+      if (categoryFilterOpen && categoryFilterRef.current && !categoryFilterRef.current.contains(e.target as Node)) {
+        setCategoryFilterOpen(false);
+      }
+      if (additionalFilterOpen && additionalFilterRef.current && !additionalFilterRef.current.contains(e.target as Node)) {
+        setAdditionalFilterOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [productFilterOpen, categoryFilterOpen, additionalFilterOpen]);
 
   const filteredProducts = useMemo(() => {
     const q = productSearch.toLowerCase();
@@ -246,6 +266,11 @@ export default function CatalogAdmin() {
 
   const formatMoney = (cents: number) =>
     (cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
+  const formatProductCode = (code: number | undefined | null): string => {
+    if (code == null || Number.isNaN(Number(code))) return "—";
+    return String(Number(code)).padStart(6, "0");
+  };
   const parseApiErrorMessage = (message: string) => {
     const raw = (message || "").trim();
     if (!raw) return "Falha ao processar solicitacao.";
@@ -277,10 +302,22 @@ export default function CatalogAdmin() {
     ? sortedCategories.filter((c) => (productsByCategory.get(c.id) ?? []).length > 0)
     : paginatedCategories;
 
-  function openModal(mode: ModalMode, id?: string) {
+  async function openModal(mode: ModalMode, id?: string) {
     if (!canEditProducts) return;
     setModalMode(mode);
     setEditingId(id ?? null);
+    if (mode === "product" && !id && selectedStoreId) {
+      try {
+        const res = await adminFetch<{ code: number }>(
+          `/admin/catalog/next-product-code?store_id=${encodeURIComponent(selectedStoreId)}`
+        );
+        setNextProductCode(res?.code ?? null);
+      } catch {
+        setNextProductCode(null);
+      }
+    } else {
+      setNextProductCode(null);
+    }
     if (mode === "product" && id) {
       const prod = products.find((p) => p.id === id);
       if (prod) {
@@ -789,12 +826,12 @@ export default function CatalogAdmin() {
                 <div className="space-y-1">
                   <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Catalogo</p>
                   <h2 className="text-lg font-semibold">Produtos</h2>
-                  <p className="text-sm text-slate-600">
-                    Expanda as categorias para visualizar os produtos relacionados.
+                  <p className="text-sm text-slate-600 italic">
+                    {filteredProducts.length} produto{filteredProducts.length !== 1 ? "s" : ""}
                   </p>
                 </div>
                 <div className="flex flex-col sm:items-end gap-1 w-full sm:w-auto">
-                  <div className="flex items-center gap-2 w-full sm:w-auto">
+                  <div className="flex items-center gap-2 w-full sm:w-auto" ref={productFilterRef}>
                     <div className="relative flex items-center">
                       <button
                         type="button"
@@ -859,7 +896,6 @@ export default function CatalogAdmin() {
                       }}
                     />
                   </div>
-                  <span className="text-xs text-slate-600">Total: {filteredProducts.length} produtos</span>
                 </div>
               </div>
 
@@ -906,7 +942,10 @@ export default function CatalogAdmin() {
                                   key={p.id}
                                   className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2"
                                 >
-                                  <div className="h-12 w-12 rounded-lg overflow-hidden border border-slate-200 bg-slate-100 flex items-center justify-center">
+                                  <span className="w-14 shrink-0 text-center font-mono text-xs text-slate-600 tabular-nums">
+                                    {formatProductCode(p.code)}
+                                  </span>
+                                  <div className="h-12 w-12 rounded-lg overflow-hidden border border-slate-200 bg-slate-100 flex items-center justify-center shrink-0">
                                     {p.image_url ? (
                                       // eslint-disable-next-line @next/next/no-img-element
                                       <img
@@ -1007,7 +1046,10 @@ export default function CatalogAdmin() {
                                 key={p.id}
                                 className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2"
                               >
-                                <div className="h-12 w-12 rounded-lg overflow-hidden border border-slate-200 bg-slate-100 flex items-center justify-center">
+                                <span className="w-14 shrink-0 text-center font-mono text-xs text-slate-600 tabular-nums">
+                                  {formatProductCode(p.code)}
+                                </span>
+                                <div className="h-12 w-12 rounded-lg overflow-hidden border border-slate-200 bg-slate-100 flex items-center justify-center shrink-0">
                                   {p.image_url ? (
                                     // eslint-disable-next-line @next/next/no-img-element
                                     <img
@@ -1118,7 +1160,7 @@ export default function CatalogAdmin() {
                     Hierarquia de categorias e produtos. Use Minimizar para recolher apenas a categoria.
                   </p>
                 </div>
-                <div className="flex flex-col sm:items-end gap-1 w-full sm:w-auto">
+                <div className="flex flex-col sm:items-end gap-1 w-full sm:w-auto" ref={categoryFilterRef}>
                   <div className="flex items-center gap-2 w-full sm:w-auto">
                     <div className="relative flex items-center">
                       <button
@@ -1250,7 +1292,7 @@ export default function CatalogAdmin() {
                   <h2 className="text-lg font-semibold">Adicionais</h2>
                   <p className="text-sm text-slate-600">Cadastre e vincule adicionais para os produtos da loja.</p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2" ref={additionalFilterRef}>
                   <div className="relative flex items-center">
                     <button
                       type="button"
@@ -1395,6 +1437,22 @@ export default function CatalogAdmin() {
                 {modalMode === "product" ? (
                   <>
                     <label className="sm:col-span-2 space-y-1">
+                      <span>Código</span>
+                      <input
+                        type="text"
+                        className="input w-full !bg-slate-200 border-slate-300 text-slate-700 cursor-not-allowed font-mono tabular-nums"
+                        value={
+                          editingId
+                            ? formatProductCode(products.find((p) => p.id === editingId)?.code)
+                            : nextProductCode != null
+                              ? formatProductCode(nextProductCode)
+                              : "…"
+                        }
+                        readOnly
+                        aria-label="Código do produto (gerado automaticamente)"
+                      />
+                    </label>
+                    <label className="sm:col-span-2 space-y-1">
                       <span>Tipo de produto</span>
                       <select
                         className="input w-full"
@@ -1409,16 +1467,24 @@ export default function CatalogAdmin() {
                     </label>
                     <label className="space-y-1">
                       <span>Unidade de medida <span className="text-slate-400 text-xs">(opcional)</span></span>
-                      <input
-                        type="text"
+                      <select
                         className="input w-full"
-                        placeholder="Ex.: un, kg, cx, L"
-                        maxLength={24}
-                        value={modalData.unit_of_measure}
+                        value={modalData.unit_of_measure || ""}
                         onChange={(e) => setModalData({ ...modalData, unit_of_measure: e.target.value })}
                         aria-label="Unidade de medida"
-                      />
-                      <span className="text-xs text-neutral-500">Exibida no menu de estoque (ex.: un, kg, cx).</span>
+                      >
+                        <option value="">—</option>
+                        <option value="un">un</option>
+                        <option value="kg">kg</option>
+                        <option value="g">g</option>
+                        <option value="ml">ml</option>
+                        <option value="L">L</option>
+                        <option value="cx">cx</option>
+                        <option value="pct">pct</option>
+                        <option value="lt">lt</option>
+                        <option value="m">m</option>
+                        <option value="cm">cm</option>
+                      </select>
                     </label>
                     {!modalData.is_custom && (
                       <>
