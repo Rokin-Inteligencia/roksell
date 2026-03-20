@@ -25,6 +25,7 @@ from app.services.admin_onboarding import (
     complete_onboarding as svc_complete_onboarding,
     enable_onboarding_test_mode as svc_enable_onboarding_test_mode,
 )
+from app.services.order_code import get_next_order_code
 from app.services.whatsapp import send_order_status_whatsapp
 from ..tenancy import TenantContext, get_tenant_context
 
@@ -159,6 +160,119 @@ def _status_config_for_scope(
     if not final_merged:
         final_merged = fallback_final
     return statuses_merged, final_merged, (colors_merged or None), canceled_color
+
+
+@router.post("/orders", status_code=201)
+def create_order(
+    payload: schemas.OrderAdminCreate,
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(get_tenant_context),
+    user: models.User = Depends(require_roles(models.UserRole.owner, models.UserRole.manager)),
+):
+    """Cria um pedido manualmente. Cliente e itens obrigatórios; loja, datas e observações opcionais."""
+    scoped_store_ids = _resolve_order_scope_store_ids(db, tenant.id, user, [payload.store_id] if payload.store_id else None)
+    if scoped_store_ids is not None and not scoped_store_ids:
+        raise HTTPException(403, "Nenhuma loja acessível")
+    store_id = None
+    if payload.store_id:
+        if scoped_store_ids is not None and payload.store_id not in set(scoped_store_ids):
+            raise HTTPException(403, "Loja não acessível")
+        store_id = payload.store_id
+
+    customer = (
+        db.query(models.Customer)
+        .filter(
+            models.Customer.id == payload.customer_id,
+            models.Customer.tenant_id == tenant.id,
+        )
+        .first()
+    )
+    if not customer:
+        raise HTTPException(404, "Cliente não encontrado")
+
+    product_ids = [item.product_id for item in payload.items]
+    products = (
+        db.query(models.Product)
+        .filter(
+            models.Product.tenant_id == tenant.id,
+            models.Product.id.in_(product_ids),
+        )
+        .all()
+    )
+    products_map = {p.id: p for p in products}
+    missing = [pid for pid in product_ids if pid not in products_map]
+    if missing:
+        raise HTTPException(400, f"Produto inválido: {missing[0]}")
+
+    statuses_merged, _, _, _ = _status_config_for_scope(db, tenant.id, [store_id] if store_id else None)
+    status = (payload.status or "received").strip() or "received"
+    if status not in statuses_merged:
+        status = statuses_merged[0] if statuses_merged else "received"
+
+    subtotal = 0
+    for item in payload.items:
+        product = products_map[item.product_id]
+        subtotal += product.price_cents * item.quantity
+
+    total = max(subtotal, 0)
+    order = models.Order(
+        id=str(uuid.uuid4()),
+        tenant_id=tenant.id,
+        code=get_next_order_code(db, tenant.id),
+        customer_id=customer.id,
+        address_id=None,
+        store_id=store_id,
+        subtotal_cents=subtotal,
+        shipping_cents=0,
+        discount_cents=0,
+        campaign_id=None,
+        total_cents=total,
+        delivery_date=payload.delivery_date,
+        channel="manual",
+        status=status,
+        notes=payload.notes,
+    )
+    if payload.received_date:
+        order.created_at = datetime.combine(
+            payload.received_date,
+            datetime.now(timezone.utc).timetz(),
+        )
+    db.add(order)
+    db.flush()
+
+    for item in payload.items:
+        product = products_map[item.product_id]
+        db.add(
+            models.OrderItem(
+                id=str(uuid.uuid4()),
+                tenant_id=tenant.id,
+                order_id=order.id,
+                product_id=product.id,
+                quantity=item.quantity,
+                unit_price_cents=product.price_cents,
+            )
+        )
+
+    db.add(
+        models.Payment(
+            id=str(uuid.uuid4()),
+            tenant_id=tenant.id,
+            order_id=order.id,
+            method=models.PaymentMethod.cash,
+            status=models.PaymentStatus.pending,
+            amount_cents=total,
+        )
+    )
+    db.add(
+        models.Delivery(
+            id=str(uuid.uuid4()),
+            tenant_id=tenant.id,
+            order_id=order.id,
+            status=models.DeliveryStatus.pending,
+        )
+    )
+    db.commit()
+    return {"id": str(order.id), "code": order.code, "total_cents": total}
 
 
 @router.patch("/orders/{order_id}/status")
@@ -370,6 +484,7 @@ def list_open_orders(
     query = (
         db.query(
             models.Order.id.label("id"),
+            models.Order.code.label("code"),
             models.Order.created_at.label("created_at"),
             models.Order.delivery_date.label("delivery_date"),
             models.Order.status.label("status"),
@@ -394,6 +509,7 @@ def list_open_orders(
     return [
         schemas.OrderListItem(
             id=str(r.id),
+            code=int(getattr(r, "code", 1) or 1),
             customer_name=r.customer_name,
             created_at=r.created_at,
             delivery_date=getattr(r, "delivery_date", None),

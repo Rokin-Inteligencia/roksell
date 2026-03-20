@@ -39,6 +39,8 @@ alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
+Se o comando `alembic` nao for reconhecido (PowerShell sem venv ativado), use na pasta `roksell-backend`: `python -m alembic upgrade head` ou o script `.\run-alembic.ps1 upgrade head`.
+
 ### Frontend
 
 ```powershell

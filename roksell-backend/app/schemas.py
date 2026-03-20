@@ -348,6 +348,14 @@ class CustomerOut(BaseModel):
         from_attributes = True
 
 
+class CustomerCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=500, description="Nome completo")
+    phone: str = Field(..., min_length=1, max_length=32, description="Telefone (sera normalizado)")
+    origin_store_id: Optional[str] = None
+    birthday: Optional[date] = None
+    is_active: bool = True
+
+
 class CustomerUpdate(BaseModel):
     name: Optional[str] = None
     phone: Optional[str] = None
@@ -471,6 +479,7 @@ class DeliveryOut(BaseModel):
 
 class OrderOut(BaseModel):
     id: str
+    code: int = 1
     status: str
     pickup: bool
     created_at: Optional[datetime] = None
@@ -497,6 +506,7 @@ class OrderOut(BaseModel):
 
 class OrderListItem(BaseModel):
     id: str
+    code: int = 1
     customer_name: str | None = None
     created_at: datetime
     delivery_date: Optional[date] = None
@@ -603,6 +613,16 @@ class WhatsAppPushPublicKeyOut(BaseModel):
 class OrderItemUpdate(BaseModel):
     product_id: str
     quantity: int = Field(gt=0)
+
+
+class OrderAdminCreate(BaseModel):
+    customer_id: str = Field(..., description="ID do cliente")
+    store_id: Optional[str] = None
+    items: List[OrderItemUpdate] = Field(..., min_length=1, description="Itens do pedido")
+    delivery_date: Optional[date] = None
+    received_date: Optional[date] = None
+    notes: Optional[str] = None
+    status: str = Field(default="received", description="Status inicial do pedido")
 
 
 class OrderAdminUpdate(BaseModel):
