@@ -13,6 +13,7 @@ import { Product } from "@/types";
 
 type OrderRow = {
   id: string;
+  code: number;
   customer_name: string | null;
   created_at: string;
   delivery_date?: string | null;
@@ -226,6 +227,17 @@ export default function OrdersPage() {
   const [statusSummaryError, setStatusSummaryError] = useState<string | null>(null);
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [addressCopied, setAddressCopied] = useState(false);
+  const [showNewOrderModal, setShowNewOrderModal] = useState(false);
+  const [newOrderCustomerSearch, setNewOrderCustomerSearch] = useState("");
+  const [newOrderCustomerOptions, setNewOrderCustomerOptions] = useState<CustomerOption[]>([]);
+  const [newOrderCustomerId, setNewOrderCustomerId] = useState("");
+  const [newOrderStoreId, setNewOrderStoreId] = useState("");
+  const [newOrderItems, setNewOrderItems] = useState<{ product_id: string; quantity: number; name?: string; unit_price_cents?: number }[]>([]);
+  const [newOrderDeliveryDate, setNewOrderDeliveryDate] = useState("");
+  const [newOrderNotes, setNewOrderNotes] = useState("");
+  const [newOrderReceivedDate, setNewOrderReceivedDate] = useState("");
+  const [newOrderSaving, setNewOrderSaving] = useState(false);
+  const [newOrderError, setNewOrderError] = useState<string | null>(null);
   const openOrdersIdsRef = useRef<Set<string> | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const selectedStoreKey = selectedStoreIds.join(",");
@@ -753,6 +765,25 @@ function normalizeStatusColors(
     return () => clearTimeout(handle);
   }, [editCustomerSearch, panelMode]);
 
+  useEffect(() => {
+    if (!showNewOrderModal) return;
+    const term = newOrderCustomerSearch.trim();
+    const handle = setTimeout(async () => {
+      try {
+        const qs = new URLSearchParams();
+        qs.set("page", "1");
+        qs.set("limit", "20");
+        qs.set("active", "all");
+        if (term) qs.set("search", term);
+        const res = await adminFetch<CustomerOption[]>(`/admin/customers?${qs.toString()}`);
+        setNewOrderCustomerOptions(res);
+      } catch {
+        setNewOrderCustomerOptions([]);
+      }
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [showNewOrderModal, newOrderCustomerSearch]);
+
   function updateItem(idx: number, next: Partial<OrderItem>) {
     setEditItems((items) =>
       items.map((item, index) => {
@@ -849,6 +880,85 @@ function normalizeStatusColors(
     }
   }
 
+  async function openNewOrderModal() {
+    setShowNewOrderModal(true);
+    setNewOrderCustomerSearch("");
+    setNewOrderCustomerOptions([]);
+    setNewOrderCustomerId("");
+    setNewOrderStoreId(stores[0]?.id ?? "");
+    setNewOrderItems([]);
+    setNewOrderDeliveryDate("");
+    setNewOrderNotes("");
+    setNewOrderReceivedDate(toDateInputValue(new Date().toISOString()));
+    setNewOrderError(null);
+    await loadCatalog();
+  }
+
+  const newOrderCatalogOptions = (() => {
+    const map = new Map(catalog.map((item) => [item.id, item]));
+    return Array.from(map.values());
+  })();
+
+  function addNewOrderItem() {
+    const first = newOrderCatalogOptions[0];
+    if (!first) return;
+    setNewOrderItems((prev) => [...prev, { product_id: first.id, quantity: 1, name: first.name, unit_price_cents: first.price_cents }]);
+  }
+
+  function updateNewOrderItem(idx: number, upd: Partial<{ product_id: string; quantity: number }>) {
+    setNewOrderItems((prev) =>
+      prev.map((item, i) => {
+        if (i !== idx) return item;
+        const next = { ...item, ...upd };
+        if (upd.product_id) {
+          const p = newOrderCatalogOptions.find((x) => x.id === upd.product_id);
+          if (p) {
+            next.name = p.name;
+            next.unit_price_cents = p.price_cents;
+          }
+        }
+        return next;
+      })
+    );
+  }
+
+  function removeNewOrderItem(idx: number) {
+    setNewOrderItems((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  async function submitNewOrder() {
+    if (!newOrderCustomerId) {
+      setNewOrderError("Selecione um cliente.");
+      return;
+    }
+    if (newOrderItems.length === 0) {
+      setNewOrderError("Adicione ao menos um item.");
+      return;
+    }
+    setNewOrderSaving(true);
+    setNewOrderError(null);
+    try {
+      await adminFetch<{ id: string; code: number; total_cents: number }>("/admin/orders", {
+        method: "POST",
+        body: JSON.stringify({
+          customer_id: newOrderCustomerId,
+          store_id: newOrderStoreId || null,
+          items: newOrderItems.map((item) => ({ product_id: item.product_id, quantity: item.quantity })),
+          delivery_date: newOrderDeliveryDate || null,
+          received_date: newOrderReceivedDate || null,
+          notes: newOrderNotes.trim() || null,
+          status: "received",
+        }),
+      });
+      setShowNewOrderModal(false);
+      await refreshAll();
+    } catch (e) {
+      setNewOrderError(e instanceof Error ? e.message : "Falha ao criar pedido");
+    } finally {
+      setNewOrderSaving(false);
+    }
+  }
+
   function toggleStoreFilter(storeId: string) {
     setSelectedStoreIds((current) => {
       const exists = current.includes(storeId);
@@ -858,6 +968,15 @@ function normalizeStatusColors(
       }
       return [...current, storeId];
     });
+  }
+
+  function toggleSort(column: "code" | "created_at" | "delivery_date") {
+    if (sortBy === column) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortBy(column);
+      setSortDir(column === "code" ? "asc" : "desc");
+    }
   }
 
   const storeName = (id?: string | null) => {
@@ -871,9 +990,7 @@ function normalizeStatusColors(
         ? "Todas as lojas"
         : `${selectedStoreIds.length} loja(s)`;
   const statusLabel = statusOptions.find((option) => option.value === status)?.label ?? "Todos";
-  const sortLabel = sortBy === "delivery_date" ? "Entrega" : "Criacao";
-  const sortDirLabel = sortDir === "asc" ? "Crescente" : "Decrescente";
-  const filterSummary = `${period}d · ${statusLabel} · ${selectedStoresLabel}${customer ? ` · ${customer}` : ""} · ${sortLabel} ${sortDirLabel}`;
+  const filterSummary = `${period}d · ${statusLabel} · ${selectedStoresLabel}${customer ? ` · ${customer}` : ""}`;
   const openCount = summary?.open_count ?? openOrders.length;
   const revenueTodayCents = summary?.revenue_today_cents ?? 0;
   const ordersToday = summary?.orders_today ?? 0;
@@ -1100,7 +1217,7 @@ function normalizeStatusColors(
                     >
                       <div className="flex items-center justify-between text-[11px] text-slate-500">
                         <span className="font-mono flex items-center gap-1">
-                          #{order.id.slice(-6)}
+                          #{order.code}
                           {order.notes && order.notes.trim() && (
                             <span title="Pedido com observacoes" className="text-amber-500">
                               <svg
@@ -1152,110 +1269,100 @@ function normalizeStatusColors(
               )}
             </section>
 
-            <section className="rounded-2xl bg-white border border-slate-200 p-3 sm:p-4 space-y-3 sm:space-y-4">
-              <button
-                type="button"
-                onClick={() => setFilterOpen((open) => !open)}
-                className="w-full flex items-center justify-between text-left gap-3"
-                aria-expanded={filterOpen}
-              >
-                <div>
-                  <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Filtro</div>
-                  <div className="text-sm text-slate-700">{filterSummary}</div>
+            <section className="rounded-3xl bg-white border border-slate-200 p-3 sm:p-5 space-y-4 shadow-sm">
+              <div className="flex flex-wrap items-center gap-3 justify-between">
+                <div className="space-y-1">
+                  <p className="text-xs uppercase tracking-[0.16em] text-slate-500">Pedidos</p>
+                  <h2 className="text-lg font-semibold text-slate-900">Listagem de pedidos</h2>
                 </div>
-                <span className="px-3 py-1 rounded-full bg-slate-100 border border-slate-200 text-xs text-slate-700">
-                  {filterOpen ? "Fechar" : "Editar"}
-                </span>
-              </button>
-                <div
-                  className={`${filterOpen ? "grid" : "hidden"} grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2 sm:gap-3 text-xs sm:text-sm`}
-                >
-                <label className="space-y-1">
-                  <span>Periodo (dias)</span>
-                  <select className="input w-full" value={period} onChange={(e) => setPeriod(e.target.value)}>
-                    <option value="7">7</option>
-                    <option value="15">15</option>
-                    <option value="30">30</option>
-                    <option value="60">60</option>
-                  </select>
-                </label>
-                <label className="space-y-1">
-                  <span>Status</span>
-                  <select className="input w-full" value={status} onChange={(e) => setStatus(e.target.value)}>
-                    {statusOptions.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="space-y-1">
-                  <span>Ordenar por</span>
-                  <select className="input w-full" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
-                    <option value="created_at">Data de criacao</option>
-                    <option value="delivery_date">Data de entrega</option>
-                  </select>
-                </label>
-                <label className="space-y-1">
-                  <span>Direcao</span>
-                  <select className="input w-full" value={sortDir} onChange={(e) => setSortDir(e.target.value)}>
-                    <option value="desc">Decrescente</option>
-                    <option value="asc">Crescente</option>
-                  </select>
-                </label>
-                <label className="space-y-1">
-                  <span>Cliente</span>
-                  <input className="input w-full" value={customer} onChange={(e) => setCustomer(e.target.value)} />
-                </label>
-                <label className="space-y-1">
-                  <span>Itens por pagina</span>
-                  <select className="input w-full" value={pageSize} onChange={(e) => setPageSize(e.target.value)}>
-                    <option value="10">10</option>
-                    <option value="30">30</option>
-                    <option value="50">50</option>
-                  </select>
-                </label>
-                <div className="flex items-end gap-2 sm:justify-end">
+                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto sm:justify-end">
+                  <div className="relative flex-1 sm:flex-initial flex items-center gap-2">
+                    {filterOpen && (
+                      <div className="absolute right-0 top-full mt-1 z-10 rounded-xl border border-slate-200 bg-white p-3 shadow-lg min-w-[240px] space-y-2">
+                        <label className="block space-y-1 text-xs">
+                          <span>Periodo (dias)</span>
+                          <select className="input w-full" value={period} onChange={(e) => setPeriod(e.target.value)}>
+                            <option value="7">7</option>
+                            <option value="15">15</option>
+                            <option value="30">30</option>
+                            <option value="60">60</option>
+                          </select>
+                        </label>
+                        <label className="block space-y-1 text-xs">
+                          <span>Status</span>
+                          <select className="input w-full" value={status} onChange={(e) => setStatus(e.target.value)}>
+                            {statusOptions.map((o) => (
+                              <option key={o.value} value={o.value}>
+                                {o.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="block space-y-1 text-xs">
+                          <span>Ordenar por</span>
+                          <select className="input w-full" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+                            <option value="code">Numero do pedido</option>
+                            <option value="created_at">Data de emissao</option>
+                            <option value="delivery_date">Data de entrega</option>
+                          </select>
+                        </label>
+                        <label className="block space-y-1 text-xs">
+                          <span>Direcao</span>
+                          <select className="input w-full" value={sortDir} onChange={(e) => setSortDir(e.target.value)}>
+                            <option value="desc">Decrescente</option>
+                            <option value="asc">Crescente</option>
+                          </select>
+                        </label>
+                        <label className="block space-y-1 text-xs">
+                          <span>Cliente</span>
+                          <input className="input w-full" value={customer} onChange={(e) => setCustomer(e.target.value)} placeholder="Nome ou telefone" />
+                        </label>
+                        <label className="block space-y-1 text-xs">
+                          <span>Itens por pagina</span>
+                          <select className="input w-full" value={pageSize} onChange={(e) => setPageSize(e.target.value)}>
+                            <option value="10">10</option>
+                            <option value="30">30</option>
+                            <option value="50">50</option>
+                          </select>
+                        </label>
+                        <button
+                          onClick={() => {
+                            setPage(1);
+                            setStoreFilterOpen(false);
+                            setFilterOpen(false);
+                            refreshAll();
+                          }}
+                          className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm bg-slate-100 hover:bg-white/20"
+                          disabled={loading}
+                        >
+                          {loading ? "Carregando..." : "Aplicar"}
+                        </button>
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setFilterOpen((o) => !o)}
+                      className="p-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100"
+                      aria-label="Filtros"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+                      </svg>
+                    </button>
+                  </div>
                   <button
-                    onClick={() => {
-                      setPage(1);
-                      setStoreFilterOpen(false);
-                      refreshAll();
-                    }}
-                    className="px-3 py-2 rounded-lg bg-[#6320ee] text-white text-xs sm:text-sm active:scale-95 disabled:opacity-50 w-full sm:w-auto"
-                    disabled={loading}
+                    type="button"
+                    onClick={() => openNewOrderModal()}
+                    className="px-3 py-2 rounded-lg bg-[#6320ee] text-white text-sm font-semibold disabled:opacity-50"
                   >
-                    Aplicar filtros
+                    Incluir pedido
                   </button>
                 </div>
               </div>
-              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
-                <span>
-                  Pagina {page} | Total retornado: {orders.length}
-                </span>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    className="px-2 py-1 rounded bg-slate-100 border border-slate-200 disabled:opacity-50"
-                    disabled={page === 1}
-                  >
-                    Anterior
-                  </button>
-                  <button
-                    onClick={() => setPage((p) => p + 1)}
-                    className="px-2 py-1 rounded bg-slate-100 border border-slate-200"
-                  >
-                    Proxima
-                  </button>
-                </div>
-              </div>
+              {loading && <span className="text-xs text-slate-600">Atualizando...</span>}
             </section>
 
             <section className="rounded-2xl bg-white border border-slate-200 p-3 sm:p-5 space-y-3">
-              <div className="flex items-center justify-between">
-                <h2 className="font-semibold">Pedidos</h2>
-                {loading && <span className="text-xs text-slate-600">Atualizando...</span>}
-              </div>
               {orders.length === 0 ? (
                 <p className="text-sm text-slate-600">Nenhum pedido encontrado.</p>
               ) : (
@@ -1269,7 +1376,7 @@ function normalizeStatusColors(
                       >
                         <div className="flex items-start justify-between gap-2">
                           <div>
-                            <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Cliente</p>
+                            <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Pedido #{order.code} · Cliente</p>
                             <p className="text-sm font-semibold text-slate-900 flex items-center gap-1">
                               <span>{order.customer_name || "-"}</span>
                               {order.notes && order.notes.trim() && (
@@ -1352,14 +1459,59 @@ function normalizeStatusColors(
                       <table className="w-full text-xs sm:text-sm min-w-[900px]">
                         <thead className="bg-slate-100 text-left">
                           <tr>
-                            <th className="px-3 sm:px-4 py-2">Pedido</th>
-                            <th className="px-3 sm:px-4 py-2">Cliente</th>
-                            <th className="px-3 sm:px-4 py-2">Data</th>
-                            <th className="px-3 sm:px-4 py-2">Entrega</th>
-                            <th className="px-3 sm:px-4 py-2">Loja</th>
-                            <th className="px-3 sm:px-4 py-2">Status</th>
-                            <th className="px-3 sm:px-4 py-2">Total</th>
-                            <th className="px-3 sm:px-4 py-2 text-right">Acoes</th>
+                            <th className="px-3 sm:px-4 py-2">
+                              <button
+                                type="button"
+                                onClick={() => toggleSort("code")}
+                                className="inline-flex items-center gap-1 font-semibold text-slate-700 hover:text-slate-900"
+                              >
+                                Nº pedido
+                                {sortBy === "code" && (
+                                  sortDir === "asc" ? (
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>
+                                  ) : (
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                                  )
+                                )}
+                              </button>
+                            </th>
+                            <th className="px-3 sm:px-4 py-2 font-semibold text-slate-700">Cliente</th>
+                            <th className="px-3 sm:px-4 py-2">
+                              <button
+                                type="button"
+                                onClick={() => toggleSort("created_at")}
+                                className="inline-flex items-center gap-1 font-semibold text-slate-700 hover:text-slate-900"
+                              >
+                                Data de emissão
+                                {sortBy === "created_at" && (
+                                  sortDir === "asc" ? (
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>
+                                  ) : (
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                                  )
+                                )}
+                              </button>
+                            </th>
+                            <th className="px-3 sm:px-4 py-2">
+                              <button
+                                type="button"
+                                onClick={() => toggleSort("delivery_date")}
+                                className="inline-flex items-center gap-1 font-semibold text-slate-700 hover:text-slate-900"
+                              >
+                                Entrega
+                                {sortBy === "delivery_date" && (
+                                  sortDir === "asc" ? (
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>
+                                  ) : (
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                                  )
+                                )}
+                              </button>
+                            </th>
+                            <th className="px-3 sm:px-4 py-2 font-semibold text-slate-700">Loja</th>
+                            <th className="px-3 sm:px-4 py-2 font-semibold text-slate-700">Status</th>
+                            <th className="px-3 sm:px-4 py-2 font-semibold text-slate-700">Total</th>
+                            <th className="px-3 sm:px-4 py-2 text-right font-semibold text-slate-700">Ações</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1371,7 +1523,7 @@ function normalizeStatusColors(
                             >
                               <td className="px-3 sm:px-4 py-2 font-mono text-xs">
                                 <span className="inline-flex items-center gap-1">
-                                  {order.id}
+                                  #{order.code}
                                   {order.notes && order.notes.trim() && (
                                     <span title="Pedido com observacoes" className="text-amber-500">
                                       <svg
@@ -1472,11 +1624,180 @@ function normalizeStatusColors(
                   </div>
                 </>
               )}
+              {orders.length > 0 && (
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600 pt-3 border-t border-slate-200 mt-3">
+                  <span>Página {page} · {orders.length} pedido(s) nesta página</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      className="px-2 py-1 rounded bg-slate-100 border border-slate-200 disabled:opacity-50 hover:bg-slate-200"
+                      disabled={page === 1}
+                    >
+                      Anterior
+                    </button>
+                    <button
+                      onClick={() => setPage((p) => p + 1)}
+                      className="px-2 py-1 rounded bg-slate-100 border border-slate-200 hover:bg-slate-200 disabled:opacity-50"
+                      disabled={orders.length < Number(pageSize)}
+                    >
+                      Próxima
+                    </button>
+                  </div>
+                </div>
+              )}
             </section>
           </div>
         </div>
       </div>
       </main>
+      {showNewOrderModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/90 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-slate-200">
+              <h2 className="text-xl font-semibold text-slate-900">Incluir pedido</h2>
+              <button
+                type="button"
+                onClick={() => setShowNewOrderModal(false)}
+                className="p-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600"
+                aria-label="Fechar"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-4 space-y-4 text-sm">
+              {newOrderError && <p className="text-amber-700 text-sm">{newOrderError}</p>}
+              <label className="block space-y-1">
+                <span className="font-medium text-slate-700">Buscar cliente</span>
+                <input
+                  className="input w-full"
+                  value={newOrderCustomerSearch}
+                  onChange={(e) => setNewOrderCustomerSearch(e.target.value)}
+                  placeholder="Nome ou telefone"
+                />
+              </label>
+              <label className="block space-y-1">
+                <span className="font-medium text-slate-700">Cliente <span className="text-red-600">*</span></span>
+                <select
+                  className="input w-full"
+                  value={newOrderCustomerId}
+                  onChange={(e) => setNewOrderCustomerId(e.target.value)}
+                >
+                  <option value="">Selecione...</option>
+                  {newOrderCustomerOptions.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name} {c.phone ? `(${c.phone})` : ""}</option>
+                  ))}
+                </select>
+              </label>
+              {stores.length > 1 && (
+                <label className="block space-y-1">
+                  <span className="font-medium text-slate-700">Loja</span>
+                  <select
+                    className="input w-full"
+                    value={newOrderStoreId}
+                    onChange={(e) => setNewOrderStoreId(e.target.value)}
+                  >
+                    <option value="">—</option>
+                    {stores.map((s) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              <label className="block space-y-1">
+                <span className="font-medium text-slate-700">Data de recebimento</span>
+                <input
+                  type="date"
+                  className="input w-full"
+                  value={newOrderReceivedDate}
+                  onChange={(e) => setNewOrderReceivedDate(e.target.value)}
+                />
+              </label>
+              <label className="block space-y-1">
+                <span className="font-medium text-slate-700">Data de entrega</span>
+                <input
+                  type="date"
+                  className="input w-full"
+                  value={newOrderDeliveryDate}
+                  onChange={(e) => setNewOrderDeliveryDate(e.target.value)}
+                />
+              </label>
+              <label className="block space-y-1">
+                <span className="font-medium text-slate-700">Observações</span>
+                <textarea
+                  className="input w-full min-h-[80px]"
+                  value={newOrderNotes}
+                  onChange={(e) => setNewOrderNotes(e.target.value)}
+                  placeholder="Opcional"
+                />
+              </label>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium text-slate-700">Itens <span className="text-red-600">*</span></span>
+                  <button
+                    type="button"
+                    onClick={addNewOrderItem}
+                    className="px-2 py-1 rounded-lg bg-slate-100 border border-slate-200 text-xs font-medium hover:bg-slate-200 disabled:opacity-50"
+                    disabled={newOrderCatalogOptions.length === 0}
+                  >
+                    Adicionar item
+                  </button>
+                </div>
+                {newOrderItems.length === 0 ? (
+                  <p className="text-slate-500 text-xs">Nenhum item. Clique em Adicionar item.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {newOrderItems.map((item, idx) => (
+                      <div key={`${item.product_id}-${idx}`} className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 p-2 bg-slate-50">
+                        <select
+                          className="input flex-1 min-w-0"
+                          value={item.product_id}
+                          onChange={(e) => updateNewOrderItem(idx, { product_id: e.target.value })}
+                        >
+                          {newOrderCatalogOptions.map((p) => (
+                            <option key={p.id} value={p.id}>{p.name} – {formatMoney(p.price_cents)}</option>
+                          ))}
+                        </select>
+                        <input
+                          type="number"
+                          min={1}
+                          className="input w-20"
+                          value={item.quantity}
+                          onChange={(e) => updateNewOrderItem(idx, { quantity: Number(e.target.value) || 1 })}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removeNewOrderItem(idx)}
+                          className="p-2 rounded bg-slate-200 hover:bg-slate-300 text-slate-700"
+                          aria-label="Remover"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="p-4 border-t border-slate-200 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowNewOrderModal(false)}
+                className="px-4 py-2 rounded-lg bg-slate-100 text-slate-900 font-medium hover:bg-slate-200"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => submitNewOrder()}
+                disabled={newOrderSaving}
+                className="px-4 py-2 rounded-lg bg-[#6320ee] text-white font-medium hover:brightness-95 disabled:opacity-60"
+              >
+                {newOrderSaving ? "Salvando..." : "Criar pedido"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {panelMode && (
       <div className="fixed inset-0 z-50 bg-slate-900/90 backdrop-blur-sm">
         <div className="absolute inset-y-0 right-0 w-full max-w-2xl bg-white text-slate-900 border-l border-slate-200 shadow-2xl shadow-slate-200/80 flex flex-col">
@@ -1485,7 +1806,7 @@ function normalizeStatusColors(
               <p className="text-xs uppercase tracking-[0.2em] text-slate-600">
                 {panelMode === "view" ? "Visualizar pedido" : "Editar pedido"}
               </p>
-              <h2 className="text-2xl font-semibold">{selectedOrder?.id ?? "Pedido"}</h2>
+              <h2 className="text-2xl font-semibold">#{selectedOrder?.code ?? selectedOrder?.id ?? "—"}</h2>
               {selectedOrder && (
                 <p className="text-xs text-slate-600 mt-1">
                   Recebido em {formatDateTime(selectedOrder.created_at)} - Entrega {formatDate(selectedOrder.delivery_date)} - Tipo{" "}

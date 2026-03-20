@@ -932,9 +932,11 @@ def place_order(db: Session, tenant_id: str, payload: schemas.CheckoutIn) -> Che
 
     total = max(subtotal + adjusted_shipping - discount_cents, 0)
     order_statuses = _load_order_statuses(db, tenant_id, store)
+    from app.services.order_code import get_next_order_code
     order = models.Order(
         id=_gen_id(),
         tenant_id=tenant_id,
+        code=get_next_order_code(db, tenant_id),
         customer_id=customer.id,
         address_id=address_id,
         subtotal_cents=subtotal,

@@ -229,7 +229,15 @@ Configuracao:
 - Adicionais: foto (upload) e mesmo formato de preco. Labels obrigatorio/opcional nos formularios.
 - Produtos: campo opcional "Unidade de medida" (ex.: un, kg, cx) exibida no menu de estoque.
 
-## 14. Pagina de Estoque (Portal)
+## 14. Pagina de Pedidos (Portal)
+
+- Rota: `/roksell/pedidos`. Cabecalho da secao: "Pedidos" com subtitulo "Listagem de pedidos"; botao de filtro no estilo Campanhas (icone que abre dropdown com periodo, status, ordenacao, direcao, cliente, itens por pagina). Ordenacao clicando no titulo da coluna: Nº pedido, Data de emissao e Entrega sao ordenaveis (ASC/DESC) com icone de seta. Paginacao "Anterior"/"Proxima" na parte inferior da grade. Numero do pedido exibido como #N (codigo sequencial por tenant, sem zeros à esquerda; o # nao e armazenado no banco). Opcao "Incluir pedido" abre modal para criar pedido manualmente: cliente (obrigatorio), loja (opcional), itens (obrigatorio), data de recebimento/entrega e observacoes (opcionais). Criacao via `POST /admin/orders`.
+
+## 15. Pagina de Clientes (Portal)
+
+- Rota: `/roksell/clientes`. Secao "Clientes / Base cadastrada" com botao **Cadastrar cliente** (modal alinhado ao padrao de Pedidos: overlay, campos com rotulos e asterisco em obrigatorios). Campos conforme tabela `customers`: nome e telefone obrigatorios; loja de origem (`origin_store_id`), data de nascimento e flag ativo opcionais. Listagem sem coluna de e-mail (nao existe no modelo). Edicao no modal com nome, telefone e nascimento. Criacao via `POST /admin/customers` (acao `customers` edit).
+
+## 16. Pagina de Estoque (Portal)
 
 - Rota: `/roksell/estoque`. Listagem por loja com filtro de status (Ativos/Todos/Inativos), padrao Ativos.
 - Tabela: foto (thumbnail), codigo do produto (6 digitos), nome, estoque atual (quantidade + unidade de medida) e botao de movimentacao.

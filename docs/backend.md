@@ -146,10 +146,10 @@ Login grava cookie `admin_token`:
 
 Blocos:
 
-- pedidos e operacao: `/admin/orders/*`
+- pedidos e operacao: `/admin/orders/*` — listagem, resumo, status; `POST /admin/orders` para criar pedido manual (cliente, itens, loja/datas/observacoes opcionais)
 - catalogo/produtos/adicionais: `/admin/catalog/*`
 - configuracoes operacionais: `/admin/config`
-- clientes: `/admin/customers/*`
+- clientes: `/admin/customers/*` — listagem com busca/paginacao; `POST /admin/customers` para cadastro (nome e telefone obrigatorios; loja de origem, nascimento e ativo opcionais); `PATCH /admin/customers/{id}` para edicao
 - campanhas: `/admin/campaigns/*`
 - lojas e frete por faixa: `/admin/stores/*`, `/admin/shipping/*`
 - estoque: `/admin/inventory/*` — listagem com filtro de status (active/inactive/all), movimentacao via `POST /admin/inventory/move` (operacao add/subtract)

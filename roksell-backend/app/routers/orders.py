@@ -76,6 +76,7 @@ def list_orders(
     query = (
         db.query(
             models.Order.id.label("id"),
+            models.Order.code.label("code"),
             models.Order.created_at.label("created_at"),
             models.Order.delivery_date.label("delivery_date"),
             models.Order.status.label("status"),
@@ -108,7 +109,11 @@ def list_orders(
     direction = (order_dir or "desc").strip().lower()
     if direction not in {"asc", "desc"}:
         direction = "desc"
-    if order_key == "delivery_date":
+    if order_key == "code":
+        query = query.order_by(
+            models.Order.code.asc() if direction == "asc" else models.Order.code.desc()
+        )
+    elif order_key == "delivery_date":
         if direction == "asc":
             query = query.order_by(
                 models.Order.delivery_date.is_(None),
@@ -132,6 +137,7 @@ def list_orders(
     return [
         OrderListItem(
             id=str(r.id),
+            code=int(getattr(r, "code", 1) or 1),
             customer_name=r.customer_name,
             created_at=r.created_at,
             delivery_date=getattr(r, "delivery_date", None),
@@ -296,6 +302,7 @@ def get_order(
 
     return {
         "id": str(order.id),
+        "code": int(getattr(order, "code", 1) or 1),
         "status": getattr(order, "status", "pending"),
         "pickup": bool(pickup),
         "created_at": getattr(order, "created_at", None),

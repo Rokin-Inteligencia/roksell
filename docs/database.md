@@ -76,11 +76,13 @@ Implicacoes:
 
 - `customers`
   - cliente por tenant
-  - `UNIQUE (tenant_id, phone)`
+  - `UNIQUE (tenant_id, phone)` — cadastro via portal usa `POST /admin/customers` com normalizacao de telefone
+  - campos principais: `name`, `phone` (obrigatorios); `origin_store_id`, `birthday`, `is_active` opcionais
 - `customer_addresses`
   - enderecos do cliente
 - `orders`
   - cabecalho de pedido
+  - `code`: inteiro sequencial unico por tenant (exibido como #N na UI; nao armazena o caractere #)
   - status armazenado em texto
 - `order_items`
   - itens do pedido

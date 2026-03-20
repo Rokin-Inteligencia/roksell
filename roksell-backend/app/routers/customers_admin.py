@@ -1,5 +1,8 @@
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models, schemas
@@ -75,6 +78,61 @@ def list_customers(
         )
         for customer in customers
     ]
+
+
+@router.post("", response_model=schemas.CustomerOut, status_code=201)
+def create_customer(
+    payload: schemas.CustomerCreate,
+    db: Session = Depends(get_db),
+    tenant: TenantContext = Depends(require_module_action("customers", "edit")),
+    _: models.User = Depends(require_roles(models.UserRole.owner, models.UserRole.manager, models.UserRole.operator)),
+):
+    name = (payload.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Nome e obrigatorio")
+    normalized = normalize_phone(payload.phone)
+    if not normalized:
+        raise HTTPException(status_code=422, detail="Telefone invalido")
+
+    origin_store_id = None
+    if payload.origin_store_id:
+        store = (
+            db.query(models.Store)
+            .filter(models.Store.id == payload.origin_store_id, models.Store.tenant_id == tenant.id)
+            .first()
+        )
+        if not store:
+            raise HTTPException(status_code=400, detail="Loja de origem invalida")
+        origin_store_id = store.id
+
+    customer = models.Customer(
+        id=str(uuid.uuid4()),
+        tenant_id=tenant.id,
+        origin_store_id=origin_store_id,
+        name=name,
+        phone=normalized,
+        birthday=payload.birthday,
+        is_active=payload.is_active,
+    )
+    db.add(customer)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Ja existe um cliente com este telefone neste tenant",
+        ) from None
+    db.refresh(customer)
+    origin_store_name = None
+    if customer.origin_store_id:
+        store = (
+            db.query(models.Store)
+            .filter(models.Store.id == customer.origin_store_id, models.Store.tenant_id == tenant.id)
+            .first()
+        )
+        origin_store_name = store.name if store else None
+    return _customer_out_payload(customer, origin_store_name=origin_store_name)
 
 
 @router.patch("/{customer_id}", response_model=schemas.CustomerOut)
